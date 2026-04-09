@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Shell;
 
 namespace Nodestar.App;
 
@@ -19,6 +20,8 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         Loaded += OnLoaded;
+        StateChanged += OnWindowStateChanged;
+        SizeChanged += OnWindowSizeChanged;
 
         SeedConversation();
         UpdateSendButtonState();
@@ -30,6 +33,8 @@ public partial class MainWindow : Window
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
         DockToRightSideOfScreen();
+        UpdateWindowSurfaceMargin();
+        UpdateMaximizeRestoreGlyph();
         PromptTextBox.Focus();
     }
 
@@ -38,10 +43,33 @@ public partial class MainWindow : Window
     /// </summary>
     private void HeaderBar_OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
+        if (e.ClickCount == 2)
+        {
+            MaximizeRestoreButton_OnClick(sender, e);
+            return;
+        }
+
         if (e.ButtonState == MouseButtonState.Pressed)
         {
             DragMove();
         }
+    }
+
+    /// <summary>
+    /// Updates the custom shell when the window enters or leaves maximized state.
+    /// </summary>
+    private void OnWindowStateChanged(object? sender, EventArgs e)
+    {
+        UpdateWindowSurfaceMargin();
+        UpdateMaximizeRestoreGlyph();
+    }
+
+    /// <summary>
+    /// Keeps the custom shell aligned while the user resizes the window.
+    /// </summary>
+    private void OnWindowSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        UpdateWindowSurfaceMargin();
     }
 
     /// <summary>
@@ -63,6 +91,21 @@ public partial class MainWindow : Window
     private void MinimizeButton_OnClick(object sender, RoutedEventArgs e)
     {
         WindowState = WindowState.Minimized;
+    }
+
+    /// <summary>
+    /// Toggles the window between maximized and restored states.
+    /// </summary>
+    private void MaximizeRestoreButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (WindowState == WindowState.Maximized)
+        {
+            SystemCommands.RestoreWindow(this);
+        }
+        else
+        {
+            SystemCommands.MaximizeWindow(this);
+        }
     }
 
     /// <summary>
@@ -113,6 +156,24 @@ public partial class MainWindow : Window
         Height = workArea.Height;
         Left = workArea.Right - Width;
         Top = workArea.Top;
+    }
+
+    /// <summary>
+    /// Removes the decorative inset when maximized so the shell fills the snapped bounds cleanly.
+    /// </summary>
+    private void UpdateWindowSurfaceMargin()
+    {
+        WindowSurface.Margin = WindowState == WindowState.Maximized
+            ? new Thickness(0)
+            : new Thickness(10);
+    }
+
+    /// <summary>
+    /// Keeps the maximize button glyph in sync with the current state.
+    /// </summary>
+    private void UpdateMaximizeRestoreGlyph()
+    {
+        MaximizeRestoreIcon.Text = WindowState == WindowState.Maximized ? "\uE923" : "\uE922";
     }
 
     /// <summary>
