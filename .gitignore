@@ -148,3 +148,4 @@ interops/*.dll
 # User settings
 .vs/
 *.user
+settings.json
