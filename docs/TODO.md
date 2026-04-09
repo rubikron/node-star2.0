@@ -4,6 +4,7 @@
   - 'Connect/Reconnect' to already open SW instance
   - Change close SW to Disconnect from current SW instance
     - Or ; Stop app hanging on closing SW instance through status pill
+  - List open SW instances ? Let user pick ? Highlight app on pick ?
 
 - Persisent settings
   - Open behavior (window resizing, SW instance creation, etc.)

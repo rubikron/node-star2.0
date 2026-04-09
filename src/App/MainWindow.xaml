@@ -79,7 +79,7 @@
                                 Background="{TemplateBinding Background}"
                                 BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="10">
+                                CornerRadius="15">
                             <ContentPresenter HorizontalAlignment="Center"
                                               VerticalAlignment="Center" />
                         </Border>
@@ -176,6 +176,7 @@
                                        Text="Nodestar Companion" />
                             <Button x:Name="StatusPillButton"
                                     Style="{StaticResource StatusPillButtonStyle}"
+                                    ToolTip="Manage SW Connection"
                                     Click="StatusPillButton_OnClick">
                                 <Button.ContextMenu>
                                     <ContextMenu x:Name="StatusContextMenu">
@@ -270,7 +271,7 @@
                             Background="{DynamicResource AccentSoftBrush}"
                             BorderBrush="#5A3E10"
                             BorderThickness="1"
-                            CornerRadius="10">
+                            CornerRadius="15">
                         <StackPanel Orientation="Horizontal">
                             <Ellipse Width="8" Height="8" Fill="{DynamicResource AccentBrush}" />
                             <TextBlock Margin="10,0,0,0"
