@@ -60,8 +60,16 @@ public partial class MainWindow : Window
     /// <summary>
     /// Allows the custom header surface to drag the borderless window.
     /// </summary>
-    private void HeaderBar_OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    private void HeaderBar_OnPreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
+        if (e.OriginalSource is DependencyObject source &&
+            (FindAncestor<Button>(source) is not null ||
+             FindAncestor<ContextMenu>(source) is not null ||
+             FindAncestor<TextBox>(source) is not null))
+        {
+            return;
+        }
+
         if (e.ClickCount == 2)
         {
             MaximizeRestoreButton_OnClick(sender, e);
@@ -72,6 +80,21 @@ public partial class MainWindow : Window
         {
             DragMove();
         }
+    }
+
+    /// <summary>
+    /// Restores the window to the original docked position.
+    /// </summary>
+    private void ResetWindowPositionButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (WindowState == WindowState.Maximized)
+        {
+            SystemCommands.RestoreWindow(this);
+        }
+
+        DockToRightSideOfScreen();
+        UpdateWindowSurfaceMargin();
+        _ = SyncSolidWorksWindowAsync();
     }
 
     /// <summary>
@@ -527,5 +550,24 @@ public partial class MainWindow : Window
     private void UpdateSendButtonState()
     {
         SendButton.IsEnabled = !string.IsNullOrWhiteSpace(PromptTextBox.Text);
+    }
+
+    /// <summary>
+    /// Finds an ancestor of the given type in the visual tree.
+    /// </summary>
+    private static T? FindAncestor<T>(DependencyObject? child)
+        where T : DependencyObject
+    {
+        while (child is not null)
+        {
+            if (child is T typed)
+            {
+                return typed;
+            }
+
+            child = VisualTreeHelper.GetParent(child);
+        }
+
+        return null;
     }
 }

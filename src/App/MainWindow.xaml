@@ -118,7 +118,7 @@
                                 Background="{TemplateBinding Background}"
                                 BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="999">
+                                CornerRadius="20">
                             <ContentPresenter HorizontalAlignment="Center"
                                               VerticalAlignment="Center" />
                         </Border>
@@ -150,11 +150,11 @@
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
-            <Border Grid.Row="0"
+                    <Border Grid.Row="0"
                     Padding="24,22,20,20"
                     BorderBrush="{DynamicResource PanelBorderBrush}"
                     BorderThickness="0,0,0,1"
-                    MouseLeftButtonDown="HeaderBar_OnMouseLeftButtonDown">
+                    PreviewMouseLeftButtonDown="HeaderBar_OnPreviewMouseLeftButtonDown">
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
@@ -226,6 +226,11 @@
                                 ToolTip="Settings"
                                 Click="SettingsButton_OnClick">
                             <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE713;" />
+                        </Button>
+                        <Button Style="{StaticResource ChromeButtonStyle}"
+                                ToolTip="Reset window position"
+                                Click="ResetWindowPositionButton_OnClick">
+                            <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xECA7;" />
                         </Button>
                         <Button Style="{StaticResource ChromeButtonStyle}"
                                 ToolTip="Minimize"
