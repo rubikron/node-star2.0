@@ -1,17 +1,28 @@
+using System.ComponentModel;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Effects;
 using System.Windows.Shell;
+using SwBridge.Connection;
 
 namespace Nodestar.App;
 
 /// <summary>
-/// Hosts the initial Nodestar companion-panel experience.
+/// Hosts the Nodestar companion experience and coordinates the paired
+/// SOLIDWORKS launch workflow.
 /// </summary>
 public partial class MainWindow : Window
 {
     private const double DockedWidthRatio = 0.20;
+    private const string DefaultSolidWorksExecutablePath =
+        @"C:\Program Files\SOLIDWORKS Corp\SOLIDWORKS\SLDWORKS.exe";
+
+    private readonly ISwConnector _connector = new SwConnector();
+    private bool _isStatusMenuOpen;
+    private bool _isSynchronizingSolidWorksWindow;
 
     /// <summary>
     /// Initializes the window and seeds the preview conversation.
@@ -22,20 +33,28 @@ public partial class MainWindow : Window
         Loaded += OnLoaded;
         StateChanged += OnWindowStateChanged;
         SizeChanged += OnWindowSizeChanged;
+        LocationChanged += OnWindowLocationChanged;
+        Closing += OnClosing;
+
+        _connector.StateChanged += OnConnectorStateChanged;
 
         SeedConversation();
         UpdateSendButtonState();
+        UpdateStatusDisplay(SwConnectionState.Launching);
     }
 
     /// <summary>
-    /// Positions the window as a docked panel on the right side of the primary work area.
+    /// Positions the window as a docked panel on the right side of the primary work area
+    /// and begins launching SOLIDWORKS.
     /// </summary>
-    private void OnLoaded(object sender, RoutedEventArgs e)
+    private async void OnLoaded(object sender, RoutedEventArgs e)
     {
         DockToRightSideOfScreen();
         UpdateWindowSurfaceMargin();
         UpdateMaximizeRestoreGlyph();
         PromptTextBox.Focus();
+
+        await LaunchSolidWorksAsync();
     }
 
     /// <summary>
@@ -56,12 +75,39 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
+    /// Opens the status actions menu.
+    /// </summary>
+    private void StatusPillButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (_isStatusMenuOpen || StatusContextMenu is null)
+        {
+            return;
+        }
+
+        CloseSolidWorksMenuItem.IsEnabled = _connector.HasActiveProcess;
+        StatusContextMenu.PlacementTarget = StatusPillButton;
+        StatusContextMenu.Closed -= StatusContextMenu_OnClosed;
+        StatusContextMenu.Closed += StatusContextMenu_OnClosed;
+        _isStatusMenuOpen = true;
+        StatusContextMenu.IsOpen = true;
+    }
+
+    /// <summary>
+    /// Tracks the state of the status actions menu.
+    /// </summary>
+    private void StatusContextMenu_OnClosed(object? sender, RoutedEventArgs e)
+    {
+        _isStatusMenuOpen = false;
+    }
+
+    /// <summary>
     /// Updates the custom shell when the window enters or leaves maximized state.
     /// </summary>
     private void OnWindowStateChanged(object? sender, EventArgs e)
     {
         UpdateWindowSurfaceMargin();
         UpdateMaximizeRestoreGlyph();
+        _ = SyncSolidWorksWindowAsync();
     }
 
     /// <summary>
@@ -70,6 +116,40 @@ public partial class MainWindow : Window
     private void OnWindowSizeChanged(object sender, SizeChangedEventArgs e)
     {
         UpdateWindowSurfaceMargin();
+        _ = SyncSolidWorksWindowAsync();
+    }
+
+    /// <summary>
+    /// Keeps the SOLIDWORKS window aligned to the remaining desktop space when Nodestar moves.
+    /// </summary>
+    private void OnWindowLocationChanged(object? sender, EventArgs e)
+    {
+        _ = SyncSolidWorksWindowAsync();
+    }
+
+    /// <summary>
+    /// Responds to connector state changes on the UI thread.
+    /// </summary>
+    private async void OnConnectorStateChanged(object? sender, SwConnectionState state)
+    {
+        await Dispatcher.InvokeAsync(() =>
+        {
+            UpdateStatusDisplay(state);
+        });
+
+        if (state == SwConnectionState.Ready)
+        {
+            await SyncSolidWorksWindowAsync();
+        }
+        else if (state == SwConnectionState.Lost)
+        {
+            await Dispatcher.InvokeAsync(() =>
+            {
+                AddAssistantMessage(
+                    "system",
+                    "The SOLIDWORKS instance exited unexpectedly. Nodestar is still open, but the CAD session is no longer available.");
+            });
+        }
     }
 
     /// <summary>
@@ -109,11 +189,61 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
+    /// Closes the active SOLIDWORKS instance without closing Nodestar.
+    /// </summary>
+    private async void CloseSolidWorksMenuItem_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (!_connector.HasActiveProcess)
+        {
+            return;
+        }
+
+        try
+        {
+            UpdateStatusDisplay(SwConnectionState.Launching);
+            AddAssistantMessage("system", "Closing the SOLIDWORKS instance...");
+            await _connector.DisconnectAsync();
+            AddAssistantMessage("system", "SOLIDWORKS was closed. Nodestar remains available.");
+        }
+        catch (Exception ex)
+        {
+            UpdateStatusDisplay(SwConnectionState.Failed);
+            AddAssistantMessage("system", $"Failed to close SOLIDWORKS cleanly: {ex.Message}");
+        }
+    }
+
+    /// <summary>
     /// Closes the companion panel.
     /// </summary>
     private void CloseButton_OnClick(object sender, RoutedEventArgs e)
     {
         Close();
+    }
+
+    /// <summary>
+    /// Warns the user before closing Nodestar while SOLIDWORKS is still running.
+    /// </summary>
+    private void OnClosing(object? sender, CancelEventArgs e)
+    {
+        if (!_connector.HasActiveProcess)
+        {
+            return;
+        }
+
+        var result = MessageBox.Show(
+            this,
+            "The SOLIDWORKS instance will remain open if you close Nodestar now.\n\nContinue closing Nodestar and leave SOLIDWORKS running?",
+            "Close Nodestar",
+            MessageBoxButton.OKCancel,
+            MessageBoxImage.Warning);
+
+        if (result != MessageBoxResult.OK)
+        {
+            e.Cancel = true;
+            return;
+        }
+
+        _connector.DetachAsync().GetAwaiter().GetResult();
     }
 
     /// <summary>
@@ -159,7 +289,82 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Removes the decorative inset when maximized so the shell fills the snapped bounds cleanly.
+    /// Launches and connects to SOLIDWORKS using the default installation path.
+    /// </summary>
+    private async Task LaunchSolidWorksAsync()
+    {
+        AddAssistantMessage("system", "Launching SOLIDWORKS and waiting for the session to become available...");
+        UpdateStatusDisplay(SwConnectionState.Launching);
+
+        try
+        {
+            await _connector.ConnectAsync(DefaultSolidWorksExecutablePath);
+            await SyncSolidWorksWindowAsync();
+
+            var revisionSuffix = string.IsNullOrWhiteSpace(_connector.RevisionNumber)
+                ? string.Empty
+                : $" Revision {_connector.RevisionNumber}.";
+
+            AddAssistantMessage(
+                "system",
+                $"SOLIDWORKS connected successfully.{revisionSuffix}");
+        }
+        catch (FileNotFoundException ex)
+        {
+            UpdateStatusDisplay(SwConnectionState.Failed);
+            AddAssistantMessage(
+                "system",
+                $"SOLIDWORKS could not be launched because the executable path was not found: {ex.FileName}");
+        }
+        catch (Exception ex)
+        {
+            UpdateStatusDisplay(SwConnectionState.Failed);
+            AddAssistantMessage(
+                "system",
+                $"Failed to launch or connect to SOLIDWORKS: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Resizes the SOLIDWORKS window to occupy the space left of the Nodestar panel.
+    /// </summary>
+    private async Task SyncSolidWorksWindowAsync()
+    {
+        if (_isSynchronizingSolidWorksWindow ||
+            _connector.State != SwConnectionState.Ready ||
+            WindowState == WindowState.Maximized)
+        {
+            return;
+        }
+
+        var workArea = SystemParameters.WorkArea;
+        var solidWorksWidth = (int)Math.Round(Left - workArea.Left);
+        if (solidWorksWidth <= 0)
+        {
+            return;
+        }
+
+        try
+        {
+            _isSynchronizingSolidWorksWindow = true;
+            await _connector.ResizeMainWindowAsync(
+                (int)Math.Round(workArea.Left),
+                (int)Math.Round(workArea.Top),
+                solidWorksWidth,
+                (int)Math.Round(workArea.Height));
+        }
+        catch
+        {
+            // Window sync is a layout convenience rather than a hard requirement.
+        }
+        finally
+        {
+            _isSynchronizingSolidWorksWindow = false;
+        }
+    }
+
+    /// <summary>
+    /// Removes the decorative inset when maximized so the shell fills the bounds cleanly.
     /// </summary>
     private void UpdateWindowSurfaceMargin()
     {
@@ -177,6 +382,42 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
+    /// Updates the status pill text, colors, and action availability.
+    /// </summary>
+    private void UpdateStatusDisplay(SwConnectionState state)
+    {
+        string label;
+        Color indicatorColor;
+
+        switch (state)
+        {
+            case SwConnectionState.Ready:
+                label = "Connected";
+                indicatorColor = (Color)ColorConverter.ConvertFromString("#22C55E");
+                break;
+            case SwConnectionState.Launching:
+                label = "Connecting";
+                indicatorColor = (Color)ColorConverter.ConvertFromString("#F59E0B");
+                break;
+            default:
+                label = "Disconnected";
+                indicatorColor = (Color)ColorConverter.ConvertFromString("#EF4444");
+                break;
+        }
+
+        StatusIndicator.Fill = new SolidColorBrush(indicatorColor);
+        StatusTextBlock.Text = label;
+        StatusPillButton.BorderBrush = new SolidColorBrush(
+            Color.FromArgb(0x70, indicatorColor.R, indicatorColor.G, indicatorColor.B));
+        CloseSolidWorksMenuItem.IsEnabled = _connector.HasActiveProcess;
+
+        if (StatusIndicatorGlow is DropShadowEffect glow)
+        {
+            glow.Color = indicatorColor;
+        }
+    }
+
+    /// <summary>
     /// Adds the first assistant messages that explain the current preview state.
     /// </summary>
     private void SeedConversation()
@@ -191,7 +432,7 @@ public partial class MainWindow : Window
             "The companion panel is live. This is where prompts, tool activity, and SOLIDWORKS feedback will surface.");
         AddAssistantMessage(
             "system",
-            "Connection and model actions are intentionally disabled in this preview. The goal here is to lock in layout and interaction feel first.");
+            "Nodestar will now launch SOLIDWORKS automatically and keep the CAD window arranged beside this panel.");
     }
 
     /// <summary>

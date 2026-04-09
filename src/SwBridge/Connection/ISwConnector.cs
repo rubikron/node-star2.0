@@ -15,9 +15,8 @@ public interface ISwConnector
     ISldWorks? Application { get; }
 
     /// <summary>
-    /// Gets the SOLIDWORKS revision string (e.g. "32.1.0") once connected,
-    /// or null if not yet connected. Format is Major.Minor.Patch where Major
-    /// corresponds to the SW release year (32 = 2024, 33 = 2025, etc.).
+    /// Gets the SOLIDWORKS revision string (for example "32.1.0") once connected,
+    /// or <see langword="null"/> if not yet connected.
     /// </summary>
     string? RevisionNumber { get; }
 
@@ -27,8 +26,12 @@ public interface ISwConnector
     SwConnectionState State { get; }
 
     /// <summary>
-    /// Raised when <see cref="State"/> changes — e.g. from Launching to Ready.
-    /// The UI binds to this to update the loading indicator.
+    /// Gets a value indicating whether the spawned SOLIDWORKS process is still running.
+    /// </summary>
+    bool HasActiveProcess { get; }
+
+    /// <summary>
+    /// Raised when <see cref="State"/> changes.
     /// </summary>
     event EventHandler<SwConnectionState> StateChanged;
 
@@ -37,12 +40,10 @@ public interface ISwConnector
     /// is ready to accept API calls.
     /// </summary>
     /// <param name="swExecutablePath">
-    /// Full path to SLDWORKS.exe, e.g.
-    /// C:\Program Files\SOLIDWORKS Corp\SOLIDWORKS\SLDWORKS.exe
+    /// Full path to <c>SLDWORKS.exe</c>.
     /// </param>
     /// <param name="cancellationToken">
-    /// Token to cancel the launch — e.g. if the user closes
-    /// the app while SW is still loading.
+    /// Token used to cancel the launch operation.
     /// </param>
     Task ConnectAsync(string swExecutablePath, CancellationToken cancellationToken = default);
 
@@ -51,4 +52,27 @@ public interface ISwConnector
     /// by this connector and releases all COM references.
     /// </summary>
     Task DisconnectAsync();
+
+    /// <summary>
+    /// Releases this application's handles and COM references without closing
+    /// the spawned SOLIDWORKS process.
+    /// </summary>
+    Task DetachAsync();
+
+    /// <summary>
+    /// Resizes and repositions the SOLIDWORKS main window.
+    /// </summary>
+    /// <param name="left">The target left screen coordinate.</param>
+    /// <param name="top">The target top screen coordinate.</param>
+    /// <param name="width">The target window width.</param>
+    /// <param name="height">The target window height.</param>
+    /// <param name="cancellationToken">
+    /// Token used to cancel the window lookup and move operation.
+    /// </param>
+    Task ResizeMainWindowAsync(
+        int left,
+        int top,
+        int width,
+        int height,
+        CancellationToken cancellationToken = default);
 }

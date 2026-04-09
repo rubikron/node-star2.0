@@ -22,6 +22,7 @@
                             ResizeBorderThickness="8"
                             UseAeroCaptionButtons="False" />
     </shell:WindowChrome.WindowChrome>
+
     <Window.Resources>
         <Style x:Key="ChromeButtonStyle" TargetType="Button">
             <Setter Property="Width" Value="36" />
@@ -101,6 +102,39 @@
                 </Trigger>
             </Style.Triggers>
         </Style>
+
+        <Style x:Key="StatusPillButtonStyle" TargetType="Button">
+            <Setter Property="Padding" Value="12,7" />
+            <Setter Property="Margin" Value="14,0,0,0" />
+            <Setter Property="Background" Value="#141D2C" />
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+            <Setter Property="BorderBrush" Value="#253149" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="StatusPillSurface"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="999">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="StatusPillSurface" Property="Background" Value="#1A2538" />
+                                <Setter Property="BorderBrush" Value="#31425F" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="StatusPillSurface" Property="Background" Value="#21314A" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Window.Resources>
 
     <Border x:Name="WindowSurface"
@@ -128,10 +162,50 @@
                     </Grid.ColumnDefinitions>
 
                     <StackPanel>
-                        <TextBlock FontSize="12"
-                                   FontWeight="SemiBold"
-                                   Foreground="{DynamicResource AccentBrush}"
-                                   Text="Nodestar Companion" />
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <TextBlock FontSize="12"
+                                       FontWeight="SemiBold"
+                                       Foreground="{DynamicResource AccentBrush}"
+                                       VerticalAlignment="Center"
+                                       Text="Nodestar Companion" />
+                            <Button x:Name="StatusPillButton"
+                                    Style="{StaticResource StatusPillButtonStyle}"
+                                    Click="StatusPillButton_OnClick">
+                                <Button.ContextMenu>
+                                    <ContextMenu x:Name="StatusContextMenu" Placement="Bottom">
+                                        <MenuItem x:Name="CloseSolidWorksMenuItem"
+                                                  Header="Close SOLIDWORKS instance"
+                                                  Click="CloseSolidWorksMenuItem_OnClick" />
+                                    </ContextMenu>
+                                </Button.ContextMenu>
+                                <StackPanel Orientation="Horizontal">
+                                    <Ellipse x:Name="StatusIndicator"
+                                             Width="10"
+                                             Height="10"
+                                             VerticalAlignment="Center"
+                                             Fill="#F59E0B">
+                                        <Ellipse.Effect>
+                                            <DropShadowEffect x:Name="StatusIndicatorGlow"
+                                                              BlurRadius="14"
+                                                              ShadowDepth="0"
+                                                              Color="#F59E0B"
+                                                              Opacity="0.95" />
+                                        </Ellipse.Effect>
+                                    </Ellipse>
+                                    <TextBlock x:Name="StatusTextBlock"
+                                               Margin="10,0,6,0"
+                                               VerticalAlignment="Center"
+                                               FontSize="12"
+                                               FontWeight="SemiBold"
+                                               Text="Connecting" />
+                                    <TextBlock FontFamily="Segoe MDL2 Assets"
+                                               VerticalAlignment="Center"
+                                               Foreground="{DynamicResource TextSecondaryBrush}"
+                                               Text="&#xE70D;" />
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
+
                         <TextBlock Margin="0,8,0,0"
                                    FontSize="28"
                                    FontWeight="SemiBold"
@@ -141,12 +215,13 @@
                                    FontSize="14"
                                    Foreground="{DynamicResource TextSecondaryBrush}"
                                    TextWrapping="Wrap"
-                                   Text="UI preview mode. The chat surface is ready; orchestration and CAD tool execution are still to be wired in." />
+                                   Text="Launches SOLIDWORKS beside Nodestar, then keeps the companion workflow visible while you prompt and inspect." />
                     </StackPanel>
 
                     <StackPanel Grid.Column="1"
                                 Orientation="Horizontal"
-                                VerticalAlignment="Top">
+                                VerticalAlignment="Top"
+                                shell:WindowChrome.IsHitTestVisibleInChrome="True">
                         <Button Style="{StaticResource ChromeButtonStyle}"
                                 ToolTip="Settings"
                                 Click="SettingsButton_OnClick">
@@ -191,7 +266,7 @@
                             <TextBlock Margin="10,0,0,0"
                                        FontSize="12"
                                        Foreground="{DynamicResource TextPrimaryBrush}"
-                                       Text="Preview shell" />
+                                       Text="Companion shell" />
                         </StackPanel>
                     </Border>
 
