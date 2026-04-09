@@ -137,3 +137,14 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# SOLIDWORKS interops (must be copied from local SW installation, see docs/setup.md)
+interops/*.dll
+
+# .NET build output
+**/bin/
+**/obj/
+
+# User settings
+.vs/
+*.user

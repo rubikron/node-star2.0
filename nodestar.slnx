@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/App/App.csproj" />
+    <Project Path="src/LlmOrchestrator/LlmOrchestrator.csproj" />
+    <Project Path="src/SwBridge/SwBridge.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/SwBridge.Tests/SwBridge.Tests.csproj" />
+  </Folder>
+</Solution>
