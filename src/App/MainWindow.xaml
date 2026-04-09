@@ -24,6 +24,10 @@
     </shell:WindowChrome.WindowChrome>
 
     <Window.Resources>
+        <Style x:Key="IconGlyphStyle" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="Segoe Fluent Icons" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
         <Style x:Key="ChromeButtonStyle" TargetType="Button">
             <Setter Property="Width" Value="36" />
             <Setter Property="Height" Value="36" />
@@ -75,7 +79,7 @@
                                 Background="{TemplateBinding Background}"
                                 BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="16">
+                                CornerRadius="10">
                             <ContentPresenter HorizontalAlignment="Center"
                                               VerticalAlignment="Center" />
                         </Border>
@@ -118,7 +122,7 @@
                                 Background="{TemplateBinding Background}"
                                 BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="20">
+                                CornerRadius="10">
                             <ContentPresenter HorizontalAlignment="Center"
                                               VerticalAlignment="Center" />
                         </Border>
@@ -162,7 +166,9 @@
                     </Grid.ColumnDefinitions>
 
                     <StackPanel>
-                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal"
+                                    VerticalAlignment="Center"
+                                    shell:WindowChrome.IsHitTestVisibleInChrome="True">
                             <TextBlock FontSize="12"
                                        FontWeight="SemiBold"
                                        Foreground="{DynamicResource AccentBrush}"
@@ -172,7 +178,7 @@
                                     Style="{StaticResource StatusPillButtonStyle}"
                                     Click="StatusPillButton_OnClick">
                                 <Button.ContextMenu>
-                                    <ContextMenu x:Name="StatusContextMenu" Placement="Bottom">
+                                    <ContextMenu x:Name="StatusContextMenu">
                                         <MenuItem x:Name="CloseSolidWorksMenuItem"
                                                   Header="Close SOLIDWORKS instance"
                                                   Click="CloseSolidWorksMenuItem_OnClick" />
@@ -198,8 +204,7 @@
                                                FontSize="12"
                                                FontWeight="SemiBold"
                                                Text="Connecting" />
-                                    <TextBlock FontFamily="Segoe MDL2 Assets"
-                                               VerticalAlignment="Center"
+                                    <TextBlock Style="{StaticResource IconGlyphStyle}"
                                                Foreground="{DynamicResource TextSecondaryBrush}"
                                                Text="&#xE70D;" />
                                 </StackPanel>
@@ -225,29 +230,29 @@
                         <Button Style="{StaticResource ChromeButtonStyle}"
                                 ToolTip="Settings"
                                 Click="SettingsButton_OnClick">
-                            <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE713;" />
+                            <TextBlock Style="{StaticResource IconGlyphStyle}" Text="&#xE713;" />
                         </Button>
                         <Button Style="{StaticResource ChromeButtonStyle}"
-                                ToolTip="Reset window position"
+                                ToolTip="Dock to right of screen"
                                 Click="ResetWindowPositionButton_OnClick">
-                            <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xECA7;" />
+                            <TextBlock Style="{StaticResource IconGlyphStyle}" Text="&#xE89F;" />
                         </Button>
                         <Button Style="{StaticResource ChromeButtonStyle}"
                                 ToolTip="Minimize"
                                 Click="MinimizeButton_OnClick">
-                            <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE921;" />
+                            <TextBlock Style="{StaticResource IconGlyphStyle}" Text="&#xE921;" />
                         </Button>
                         <Button Style="{StaticResource ChromeButtonStyle}"
                                 ToolTip="Maximize or restore"
                                 Click="MaximizeRestoreButton_OnClick">
                             <TextBlock x:Name="MaximizeRestoreIcon"
-                                       FontFamily="Segoe MDL2 Assets"
+                                       Style="{StaticResource IconGlyphStyle}"
                                        Text="&#xE922;" />
                         </Button>
                         <Button Style="{StaticResource ChromeButtonStyle}"
                                 ToolTip="Close"
                                 Click="CloseButton_OnClick">
-                            <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE8BB;" />
+                            <TextBlock Style="{StaticResource IconGlyphStyle}" Text="&#xE8BB;" />
                         </Button>
                     </StackPanel>
                 </Grid>
@@ -265,7 +270,7 @@
                             Background="{DynamicResource AccentSoftBrush}"
                             BorderBrush="#5A3E10"
                             BorderThickness="1"
-                            CornerRadius="999">
+                            CornerRadius="10">
                         <StackPanel Orientation="Horizontal">
                             <Ellipse Width="8" Height="8" Fill="{DynamicResource AccentBrush}" />
                             <TextBlock Margin="10,0,0,0"

@@ -109,6 +109,7 @@ public partial class MainWindow : Window
 
         CloseSolidWorksMenuItem.IsEnabled = _connector.HasActiveProcess;
         StatusContextMenu.PlacementTarget = StatusPillButton;
+        StatusContextMenu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
         StatusContextMenu.Closed -= StatusContextMenu_OnClosed;
         StatusContextMenu.Closed += StatusContextMenu_OnClosed;
         _isStatusMenuOpen = true;
