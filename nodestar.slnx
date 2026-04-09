@@ -5,6 +5,7 @@
     <Project Path="src/SwBridge/SwBridge.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/SwBridge.ManualTest/SwBridge.ManualTest.csproj" />
     <Project Path="tests/SwBridge.Tests/SwBridge.Tests.csproj" />
   </Folder>
 </Solution>
