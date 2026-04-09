@@ -1,13 +1,10 @@
-﻿using System.Configuration;
-using System.Data;
 using System.Windows;
 
-namespace App;
+namespace Nodestar.App;
 
 /// <summary>
-/// Interaction logic for App.xaml
+/// Provides the entry point for the Nodestar desktop shell.
 /// </summary>
 public partial class App : Application
 {
 }
-
