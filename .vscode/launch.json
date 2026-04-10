@@ -1,0 +1,17 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "C#: App Debug",
+            "type": "dotnet",
+            "request": "launch",
+            "projectPath": "${workspaceFolder}\\src\\App\\App.csproj"
+        },
+        {
+            "name": "C#: SwBridge.ManualTest Debug",
+            "type": "dotnet",
+            "request": "launch",
+            "projectPath": "${workspaceFolder}\\tests\\SwBridge.ManualTest\\SwBridge.ManualTest.csproj"
+        }
+    ]
+}

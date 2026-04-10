@@ -9,35 +9,44 @@
 - SW App states (TESTING)
 
 # Feature ideas
-- Status pill
+Priority is indicated with this key:
+0: Ignore completely for now
+1: Nice to have, not super important
+2: Should take a look at when not busy
+3: Important, aim to add soon
+
+- Status pill **0**
   - Custom dropdown for status pill
   - 'Connect/Reconnect' to already open SW instance
   - Change close SW to Disconnect from current SW instance
     - Or ; Stop app hanging on closing SW instance through status pill
   - List open SW instances ? Let user pick ? Highlight app on pick ?
 
-- Persisent settings
+- Persisent settings **0**
   - Open behavior (window resizing, SW instance creation, etc.)
   - Close behavior ('dont ask me again' on nodestar close warning)
   - Resizing follow behavior (SW instance, nodestar, both, neither)
     - Resize nodestar by following SW instance as well
 
-- Window placement
+- Window placement **0**
   - Don't resize when moving window
   - Use U+E1AC or U+EA49 for left-side chat window
 
-Other UI Changes
+Other UI Changes **1**
 - Align top right buttons with app named and status pill
 - Better button shapes/sizes
+- Settings tab doesn't actually show the input below model **2**
+  - (i (alexis, not codex) think it might be due to a footer in the SettingsWindow.xaml tab that is covering it. either making window bigger or changing footer might be fix)
 
-Macro changes
-- Scan already existing library from a company and import them into the app
-- Store macros in $HOME/Documents/nodestar/macros instead of directory
-- Edit existing macros ? (Or just always overwrite ... editing could save output tokens)
+Macro changes **1**
+- Scan already existing library from a company and import them into the app **0**
+- Store macros in $HOME/Documents/nodestar/macros instead of repository **0**
+- ListAllMacros should have flag for including descriptions. QueryMacro or something function should get details
+  - Edit existing macros ? Read macro file ? (Or just always overwrite ... editing could save output tokens)
 
-LLM
+LLM **1**
 - Shorten in-app communication with LLM to waste less tokens
   - e.g. shorten list_macros output (remove modified, created, author ?), error outputs, function descriptions
+- Standardize inputs/outputs to json **2, but do this after all backend is working**
 
-Code quality (low priority within token limits)
-- Get Codex to shorten all documentation comments, since Claude likes to yap for some reason
+Code quality **0**
