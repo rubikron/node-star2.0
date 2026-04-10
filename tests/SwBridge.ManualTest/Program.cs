@@ -1,5 +1,6 @@
 ﻿using SwBridge.Connection;
 using SwBridge.Tools.Macro;
+using SwBridge.Tools.Session;
 
 // -----------------------------------------------------------------------
 // Manual integration test: launches SOLIDWORKS, writes three simple macros,
@@ -146,6 +147,13 @@ try
     Log($"Connected. Revision: {connector.RevisionNumber}");
 
     var runTool = new RunMacroTool(connector, MacrosDir);
+    var stateTool = new GetSwStateTool(connector);
+
+    Log("Initial full state snapshot:");
+    Console.WriteLine(
+        await stateTool.ExecuteAsync(
+            new Dictionary<string, string> { ["mode"] = "full" },
+            cts.Token));
 
     // ---------------------------------------------------------------- //
     //  Step 4: Run each macro
@@ -153,14 +161,17 @@ try
 
     await Task.Delay(TimeSpan.FromSeconds(HoldSeconds), cts.Token);
     await Run(runTool, "hello_world.swb");
+    await DumpPatch(stateTool);
 
     // Brief pause between macros — SW needs a moment to settle.
     await Task.Delay(TimeSpan.FromSeconds(HoldSeconds), cts.Token);
 
     await Run(runTool, "create_cube.swb");
+    await DumpPatch(stateTool);
     await Task.Delay(TimeSpan.FromSeconds(HoldSeconds), cts.Token);
 
     await Run(runTool, "report_active_doc.swb");
+    await DumpPatch(stateTool);
     await Task.Delay(TimeSpan.FromSeconds(HoldSeconds), cts.Token);
 
     // ---------------------------------------------------------------- //
@@ -232,4 +243,13 @@ async Task Delete(string filename)
         ["filename"] = filename
     });
     Log($"delete_macro({filename}) → {result}");
+}
+
+async Task DumpPatch(GetSwStateTool tool)
+{
+    Log("get_sw_state(mode=patch)...");
+    var result = await tool.ExecuteAsync(
+        new Dictionary<string, string> { ["mode"] = "patch" },
+        cts.Token);
+    Console.WriteLine(result);
 }

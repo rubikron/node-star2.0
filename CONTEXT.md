@@ -45,6 +45,11 @@
   - detect process exit
   - disconnect or detach
   - resize the SOLIDWORKS main window
+- `SwBridge` now includes unified session-state gathering for LLM context:
+  - `Tools/Session/SwStateCollector.cs` is the single collector for active document, open documents, selection, and active configuration
+  - `Models/SwState.cs` defines the compact snapshot contract plus diff/patch payload types
+  - `Tools/Session/GetSwStateTool.cs` returns either a full compact JSON snapshot or a compact field-level patch against the previous snapshot
+  - document identities prefer normalized full paths and fall back to runtime session tokens for unsaved documents
 
 ## Macro system
 
@@ -69,14 +74,22 @@
   - writes several sample macros
   - launches or connects to SOLIDWORKS
   - runs the macros
+  - captures an initial `get_sw_state` full snapshot and later patch snapshots between macro runs
   - deletes them afterward
 - This is the best reference for the bridge's currently working flow.
 
+## Automated testing
+
+- `tests/SwBridge.Tests` now contains unit coverage for:
+  - empty state patches
+  - active-document changes
+  - open-document add/update/remove patches
+  - selection replacement patches
+  - unsaved document fallback identity stability
+  - full snapshot JSON round-trip parsing
+
 ## Known gaps
 
-- `src/SwBridge/Tools/Session/GetSwStateTool.cs` is empty.
-- `src/SwBridge/Tools/Session/OpenDocumentTool.cs` is empty.
-- `src/SwBridge/Models/SwState.cs` is still a placeholder session model.
 - `src/LlmOrchestrator` is not yet wired into a robust tool-calling loop.
 - Existing automated tests are still light; most confidence currently comes from the manual integration test.
 
@@ -86,6 +99,10 @@
 - Built for SOLIDWORKS desktop automation through COM interop.
 - Interop assemblies are stored in `interops/`.
 - The app expects SOLIDWORKS to be discoverable either through a desktop or Start menu shortcut, or a standard install path.
+- Software versions used in this project:
+  - SOLIDWORKS 2026
+  - NET10.0
+  - xUnit.net v3
 
 ## What an LLM should understand quickly
 

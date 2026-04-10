@@ -149,3 +149,4 @@ interops/*.dll
 .vs/
 *.user
 settings.json
+.claude/
