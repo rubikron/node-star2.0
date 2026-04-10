@@ -107,7 +107,7 @@ public sealed class SwConnector : ISwConnector, IDisposable
 
     /// <inheritdoc/>
     public async Task ConnectAsync(
-        string swExecutablePath,
+        string swLaunchPath,
         CancellationToken cancellationToken = default)
     {
         if (_state is SwConnectionState.Launching or SwConnectionState.Ready)
@@ -116,38 +116,44 @@ public sealed class SwConnector : ISwConnector, IDisposable
                 $"Cannot connect: current state is '{_state}'. Call DisconnectAsync first.");
         }
 
-        if (!File.Exists(swExecutablePath))
-        {
-            throw new FileNotFoundException(
-                "SOLIDWORKS executable not found. Check the configured path.",
-                swExecutablePath);
-        }
-
         State = SwConnectionState.Launching;
 
         try
         {
-            _swProcess = Process.Start(new ProcessStartInfo
+            // Attach to any SW instance that is already running (e.g. launched by the
+            // 3DEXPERIENCE Platform before this app started).
+            var existing = TryGetAnySwFromRot();
+            if (existing.HasValue)
             {
-                FileName = swExecutablePath,
+                AttachToInstance(existing.Value.App, existing.Value.Pid);
+                State = SwConnectionState.Ready;
+                return;
+            }
+
+            // Launch SW via the shell. Accepts both .exe and .lnk paths so that
+            // 3DEXPERIENCE-linked shortcuts (which embed the required platform context)
+            // are handled correctly.
+            if (!File.Exists(swLaunchPath))
+            {
+                throw new FileNotFoundException(
+                    "SOLIDWORKS launch path not found. Check the configured path.",
+                    swLaunchPath);
+            }
+
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = swLaunchPath,
                 UseShellExecute = true
             });
 
-            if (_swProcess is null)
-            {
-                State = SwConnectionState.Failed;
-                throw new InvalidOperationException("Process.Start returned null. SOLIDWORKS failed to launch.");
-            }
-
-            _application = await Task.Run(
-                () => WaitForSwInRot(_swProcess.Id, DefaultLaunchTimeout, cancellationToken),
+            // Poll the ROT for any SW instance. We do not filter by PID because a
+            // 3DEXPERIENCE shortcut spawns an intermediate launcher whose child is the
+            // actual SLDWORKS.exe — we cannot know that PID in advance.
+            var result = await Task.Run(
+                () => WaitForAnySwInRot(DefaultLaunchTimeout, cancellationToken),
                 cancellationToken);
 
-            _application.Visible = true;
-
-            _swProcess.EnableRaisingEvents = true;
-            _swProcess.Exited += OnSwProcessExited;
-
+            AttachToInstance(result.App, result.Pid);
             State = SwConnectionState.Ready;
         }
         catch (OperationCanceledException)
@@ -160,6 +166,27 @@ public sealed class SwConnector : ISwConnector, IDisposable
         {
             State = SwConnectionState.Failed;
             throw;
+        }
+    }
+
+    /// <summary>
+    /// Stores the COM reference and begins monitoring the SOLIDWORKS process for exit.
+    /// </summary>
+    private void AttachToInstance(ISldWorks app, int pid)
+    {
+        _application = app;
+        _application.Visible = true;
+
+        try
+        {
+            _swProcess = Process.GetProcessById(pid);
+            _swProcess.EnableRaisingEvents = true;
+            _swProcess.Exited += OnSwProcessExited;
+        }
+        catch (ArgumentException)
+        {
+            // The process exited between the ROT query and here — treat as no tracked process.
+            _swProcess = null;
         }
     }
 
@@ -247,11 +274,9 @@ public sealed class SwConnector : ISwConnector, IDisposable
     }
 
     /// <summary>
-    /// Blocks until SOLIDWORKS registers its COM object in the Windows
-    /// Running Object Table under the matching process moniker.
+    /// Blocks until any SOLIDWORKS instance registers in the Running Object Table.
     /// </summary>
-    private ISldWorks WaitForSwInRot(
-        int processId,
+    private static (ISldWorks App, int Pid) WaitForAnySwInRot(
         TimeSpan timeout,
         CancellationToken cancellationToken)
     {
@@ -261,25 +286,26 @@ public sealed class SwConnector : ISwConnector, IDisposable
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var app = TryGetSwFromRot(processId);
-            if (app is not null)
+            var result = TryGetAnySwFromRot();
+            if (result.HasValue)
             {
-                return app;
+                return result.Value;
             }
 
             Thread.Sleep(PollingInterval);
         }
 
         throw new TimeoutException(
-            $"SOLIDWORKS (PID {processId}) did not register in the ROT within {timeout.TotalSeconds}s.");
+            $"SOLIDWORKS did not register in the ROT within {timeout.TotalSeconds}s.");
     }
 
     /// <summary>
-    /// Performs a single Running Object Table query for the specified process ID.
+    /// Performs a single Running Object Table scan for any SOLIDWORKS instance,
+    /// returning the COM object and the process ID encoded in its moniker name.
     /// </summary>
-    private static ISldWorks? TryGetSwFromRot(int processId)
+    private static (ISldWorks App, int Pid)? TryGetAnySwFromRot()
     {
-        var targetMoniker = $"SolidWorks_PID_{processId}";
+        const string monikerPrefix = "SolidWorks_PID_";
 
         IBindCtx? bindCtx = null;
         IRunningObjectTable? rot = null;
@@ -320,13 +346,22 @@ public sealed class SwConnector : ISwConnector, IDisposable
                     continue;
                 }
 
-                if (!string.Equals(name, targetMoniker, StringComparison.OrdinalIgnoreCase))
+                if (name is null ||
+                    !name.StartsWith(monikerPrefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (!int.TryParse(name[monikerPrefix.Length..], out var pid))
                 {
                     continue;
                 }
 
                 rot.GetObject(moniker, out var obj);
-                return obj as ISldWorks;
+                if (obj is ISldWorks app)
+                {
+                    return (app, pid);
+                }
             }
         }
         finally

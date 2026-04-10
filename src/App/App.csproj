@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\SwBridge\SwBridge.csproj" />
+    <ProjectReference Include="..\LlmOrchestrator\LlmOrchestrator.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

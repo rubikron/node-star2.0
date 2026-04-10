@@ -92,8 +92,9 @@ public sealed class WriteMacroTool : ISwTool
         "  'macro_name'  (required) — human-readable name, e.g. 'Create Mounting Bracket'. " +
         "  'description' (required) — what the macro does and any preconditions. " +
         "  'code'        (required) — the full VBA macro body. Must contain Sub main() " +
-        "                             as the entry point. Must not contain class modules " +
-        "                             or user forms. Should include On Error GoTo handling. " +
+        "                             as the entry point (run_macro always calls 'main'). " +
+        "                             Must not contain class modules or user forms. " +
+        "                             Should include On Error GoTo handling. " +
         "                             The standard header is generated automatically. " +
         "Returns 'SUCCESS: <filename>' on success or an 'ERROR:' message if validation fails.";
 

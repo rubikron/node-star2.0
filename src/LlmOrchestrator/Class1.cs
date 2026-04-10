@@ -1,6 +1,1 @@
-﻿namespace LlmOrchestrator;
-
-public class Class1
-{
-//  Placeholder file
-}
+// This file is intentionally empty. See LlmClient.cs, LlmSettings.cs, ChatMessage.cs.

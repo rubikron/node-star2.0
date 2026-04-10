@@ -6,6 +6,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Effects;
 using System.Windows.Shell;
+using LlmOrchestrator;
 using SwBridge.Connection;
 
 namespace Nodestar.App;
@@ -17,10 +18,11 @@ namespace Nodestar.App;
 public partial class MainWindow : Window
 {
     private const double DockedWidthRatio = 0.20;
-    private const string DefaultSolidWorksExecutablePath =
-        @"C:\Program Files\SOLIDWORKS Corp\SOLIDWORKS\SLDWORKS.exe";
 
     private readonly ISwConnector _connector = new SwConnector();
+    private readonly LlmClient _llmClient = new();
+    private LlmSettings _settings = LlmSettings.Load();
+    private readonly List<ChatMessage> _conversationHistory = [];
     private bool _isStatusMenuOpen;
     private bool _isSynchronizingSolidWorksWindow;
 
@@ -177,16 +179,15 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Shows a placeholder settings dialog until the settings surface exists.
+    /// Opens the LLM settings dialog.
     /// </summary>
     private void SettingsButton_OnClick(object sender, RoutedEventArgs e)
     {
-        MessageBox.Show(
-            this,
-            "Settings are not wired yet. This button is in place so the shell matches the intended companion-app layout.",
-            "nodestar settings",
-            MessageBoxButton.OK,
-            MessageBoxImage.Information);
+        var dialog = new SettingsWindow(_settings) { Owner = this };
+        if (dialog.ShowDialog() == true)
+        {
+            _settings = dialog.Settings;
+        }
     }
 
     /// <summary>
@@ -313,16 +314,104 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Launches and connects to SOLIDWORKS using the default installation path.
+    /// Finds the best available SOLIDWORKS launch target on this machine.
+    /// Prefers 3DEXPERIENCE desktop shortcuts (required for SW 2026+) and falls
+    /// back to the classic standalone executable for older installations.
+    /// </summary>
+    private static string? DiscoverSolidWorksLaunchPath()
+    {
+        // 1. Desktop shortcuts — 3DEXPERIENCE platform creates these and embeds the
+        //    required platform context that SW 2026+ enforces at startup.
+        var desktopRoots = new[]
+        {
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory),
+            Environment.GetFolderPath(Environment.SpecialFolder.Desktop),
+        };
+
+        foreach (var dir in desktopRoots)
+        {
+            if (!Directory.Exists(dir))
+            {
+                continue;
+            }
+
+            var lnk = Directory.GetFiles(dir, "SOLIDWORKS*.lnk").FirstOrDefault();
+            if (lnk is not null)
+            {
+                return lnk;
+            }
+        }
+
+        // 2. Start Menu (Programs folder, searched recursively).
+        var startMenuRoots = new[]
+        {
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonStartMenu), "Programs"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.StartMenu), "Programs"),
+        };
+
+        foreach (var dir in startMenuRoots)
+        {
+            if (!Directory.Exists(dir))
+            {
+                continue;
+            }
+
+            var lnk = Directory
+                .GetFiles(dir, "SOLIDWORKS*.lnk", SearchOption.AllDirectories)
+                .FirstOrDefault();
+
+            if (lnk is not null)
+            {
+                return lnk;
+            }
+        }
+
+        // 3. Classic standalone install (SW 2024 and earlier).
+        const string classicExe = @"C:\Program Files\SOLIDWORKS Corp\SOLIDWORKS\SLDWORKS.exe";
+        if (File.Exists(classicExe))
+        {
+            return classicExe;
+        }
+
+        // 4. 3DEXPERIENCE install layout (Dassault Systemes folder, any B-series version).
+        const string dsRoot = @"C:\Program Files\Dassault Systemes";
+        if (Directory.Exists(dsRoot))
+        {
+            var exe = Directory
+                .GetFiles(dsRoot, "SLDWORKS.exe", SearchOption.AllDirectories)
+                .FirstOrDefault();
+
+            if (exe is not null)
+            {
+                return exe;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Connects to SOLIDWORKS, launching it if it is not already running.
     /// </summary>
     private async Task LaunchSolidWorksAsync()
     {
-        AddAssistantMessage("system", "Launching SOLIDWORKS and waiting for the session to become available...");
+        AddAssistantMessage("system", "Connecting to SOLIDWORKS...");
         UpdateStatusDisplay(SwConnectionState.Launching);
+
+        var launchPath = DiscoverSolidWorksLaunchPath();
+        if (launchPath is null)
+        {
+            UpdateStatusDisplay(SwConnectionState.Failed);
+            AddAssistantMessage(
+                "system",
+                "SOLIDWORKS installation not found. If you are using SOLIDWORKS 2026, " +
+                "make sure the 3DEXPERIENCE Platform has created a desktop shortcut.");
+            return;
+        }
 
         try
         {
-            await _connector.ConnectAsync(DefaultSolidWorksExecutablePath);
+            await _connector.ConnectAsync(launchPath);
             await SyncSolidWorksWindowAsync();
 
             var revisionSuffix = string.IsNullOrWhiteSpace(_connector.RevisionNumber)
@@ -338,7 +427,7 @@ public partial class MainWindow : Window
             UpdateStatusDisplay(SwConnectionState.Failed);
             AddAssistantMessage(
                 "system",
-                $"SOLIDWORKS could not be launched because the executable path was not found: {ex.FileName}");
+                $"SOLIDWORKS could not be launched because the path was not found: {ex.FileName}");
         }
         catch (Exception ex)
         {
@@ -460,9 +549,9 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Submits the current prompt into the preview transcript and adds a placeholder assistant reply.
+    /// Submits the current prompt to the configured LLM and streams the reply into the transcript.
     /// </summary>
-    private void SubmitPrompt()
+    private async void SubmitPrompt()
     {
         var prompt = PromptTextBox.Text.Trim();
         if (string.IsNullOrWhiteSpace(prompt))
@@ -471,13 +560,34 @@ public partial class MainWindow : Window
         }
 
         AddUserMessage("you", prompt);
+        _conversationHistory.Add(new ChatMessage("user", prompt));
         PromptTextBox.Clear();
-
-        AddAssistantMessage(
-            "nodestar",
-            "Preview mode acknowledged the prompt. The next layer is wiring this surface into the remote LLM session and the SOLIDWORKS bridge.");
-
+        SendButton.IsEnabled = false;
         ConversationScrollViewer.ScrollToEnd();
+
+        if (string.IsNullOrWhiteSpace(_settings.BaseUrl) || string.IsNullOrWhiteSpace(_settings.ApiKey))
+        {
+            AddAssistantMessage("nodestar", "No LLM configured. Open Settings (gear icon) and enter your API base URL, key, and model.");
+            UpdateSendButtonState();
+            ConversationScrollViewer.ScrollToEnd();
+            return;
+        }
+
+        try
+        {
+            var reply = await _llmClient.SendAsync(_settings, _conversationHistory);
+            _conversationHistory.Add(new ChatMessage("assistant", reply));
+            AddAssistantMessage("nodestar", reply);
+        }
+        catch (Exception ex)
+        {
+            AddAssistantMessage("system", $"LLM request failed: {ex.Message}");
+        }
+        finally
+        {
+            UpdateSendButtonState();
+            ConversationScrollViewer.ScrollToEnd();
+        }
     }
 
     /// <summary>

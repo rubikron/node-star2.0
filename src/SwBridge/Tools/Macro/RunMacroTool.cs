@@ -12,17 +12,20 @@ namespace SwBridge.Tools.Macro;
 /// </summary>
 /// <remarks>
 /// RunMacro2 requires both a module name and a procedure name.
-/// For LLM-generated .swb macros the module is always "MainModule"
-/// and the entry sub is always "main", so neither needs to be
-/// specified by the LLM — this tool hard-codes both conventions.
+/// For .swb text macros, SOLIDWORKS derives the module name from the
+/// filename without extension (e.g. "hello_world" for hello_world.swb),
+/// so this tool computes it per-call rather than hard-coding it.
+/// The entry procedure is always "main".
 ///
 /// Macro execution is synchronous from the SW API perspective.
 /// RunMacro2 blocks until the macro finishes or errors.
 /// </remarks>
 public sealed class RunMacroTool : ISwTool
 {
-    // SW API convention for LLM-generated .swb macros.
-    private const string ModuleName    = "MainModule";
+    // The entry-point procedure name for all LLM-generated macros.
+    // The module name is NOT hardcoded — for .swb text macros SOLIDWORKS
+    // derives it from the filename without extension (e.g. "hello_world" for
+    // hello_world.swb), so it is computed per-call in RunMacro().
     private const string ProcedureName = "main";
 
     private readonly ISwConnector _connector;
@@ -55,7 +58,8 @@ public sealed class RunMacroTool : ISwTool
         "  'filename' (required) — the .swb filename, e.g. 'create_bracket.swb'. " +
         "Returns 'SUCCESS' if the macro ran without errors, or an 'ERROR:' message " +
         "with the SOLIDWORKS error code if execution failed. " +
-        "The macro must have been written using write_macro first.";
+        "The macro must have been written using write_macro first. " +
+        "The module name is derived from the filename automatically.";
 
     /// <inheritdoc/>
     public Task<string> ExecuteAsync(
@@ -91,7 +95,7 @@ public sealed class RunMacroTool : ISwTool
         if (!filename.EndsWith(".swb", StringComparison.OrdinalIgnoreCase))
             filename += ".swb";
 
-        var fullPath = Path.Combine(_macrosDirectory, filename);
+        var fullPath = Path.GetFullPath(Path.Combine(_macrosDirectory, filename));
 
         if (!File.Exists(fullPath))
             return Task.FromResult(
@@ -121,11 +125,17 @@ public sealed class RunMacroTool : ISwTool
         var app = _connector.Application!;
         int errorCode;
 
+        // For .swb text macros, SOLIDWORKS uses the filename (without extension)
+        // as the module name — e.g. "hello_world" for hello_world.swb.
+        // Passing "MainModule" or any other fixed name will silently fail with
+        // error code 0 because the module is never found.
+        var moduleName = Path.GetFileNameWithoutExtension(fullPath);
+
         // swRunMacroUnloadAfterRun ensures the macro is fully unloaded from
         // memory after execution, preventing stale state across repeated runs.
         bool success = app.RunMacro2(
             fullPath,
-            ModuleName,
+            moduleName,
             ProcedureName,
             (int)swRunMacroOption_e.swRunMacroUnloadAfterRun,
             out errorCode);
@@ -146,8 +156,8 @@ public sealed class RunMacroTool : ISwTool
 
             // The macro code itself has problems the LLM can fix
             swRunMacroError_e.swRunMacroError_InvalidProcname
-                => $"procedure '{ProcedureName}' not found in module '{ModuleName}' — " +
-                "ensure the macro has a Sub named 'main' inside a module named 'MainModule'",
+                => $"procedure '{ProcedureName}' not found in module '{moduleName}' — " +
+                "ensure the macro has a Sub named 'main'",
             swRunMacroError_e.swRunMacroError_OnlyCodeModules
                 => "macro contains non-code modules (forms or class modules) — " +
                 ".swb macros support only a single code module",
