@@ -6,6 +6,11 @@
 
 **What it is:** A Windows companion app for SOLIDWORKS. Nodestar runs as its own WPF process, launches or attaches to a SOLIDWORKS instance, keeps its own UI docked beside the CAD window, and is intended to relay user prompts to an external LLM that can decide what actions to perform in SOLIDWORKS.
 
+## This file
+- Important context for LLMs working on this project to coordinate together.
+- Keep it updated with any important changes.
+- Read it after new commits are pulled, to keep up with changes from collaborators.
+
 ## Current architecture
 
 - `src/App`

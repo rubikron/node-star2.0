@@ -1,10 +1,11 @@
 # ESSENTIAL
 #### Features needed for demo
 - Communicating with external LLM
-- SW App states
+- Fix resizing issues on different monitors (e.g. Jason's laptop)
 
-# Next prompts
-- Clean up MacroTools code, test 
+# Next prompts (Alexis)
+- SW App states
+- Remove code for launching SW instance, only find instance
 
 # Feature ideas
 - Status pill
