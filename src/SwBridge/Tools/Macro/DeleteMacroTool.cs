@@ -59,7 +59,7 @@ public sealed class DeleteMacroTool : ISwTool
         if (!filename.EndsWith(".swb", StringComparison.OrdinalIgnoreCase))
             filename += ".swb";
 
-        var fullPath = Path.Combine(_macrosDirectory, filename);
+        var fullPath = Path.GetFullPath(Path.Combine(_macrosDirectory, filename));
 
         // Verify the resolved path is still inside the macros directory
         // even after Path.Combine normalisation.

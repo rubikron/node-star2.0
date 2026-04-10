@@ -1,60 +1,235 @@
 ﻿using SwBridge.Connection;
+using SwBridge.Tools.Macro;
 
 // -----------------------------------------------------------------------
-// Manual integration test: launches SOLIDWORKS, waits 60 seconds, exits.
+// Manual integration test: launches SOLIDWORKS, writes three simple macros,
+// runs each one, lists them, then deletes them.
+//
 // Run from repo root with:
 //   dotnet run --project tests/SwBridge.ManualTest
 // -----------------------------------------------------------------------
 
-const string SwPath = @"C:\Program Files\SOLIDWORKS Corp\SOLIDWORKS\SLDWORKS.exe";
-const int HoldSeconds = 60;
+const string SwPath       = @"C:\Program Files\SOLIDWORKS Corp\SOLIDWORKS\SLDWORKS.exe";
+const string MacrosDir    = @".\macros_integration_test";
+const int    HoldSeconds  = 10;
+
+Directory.CreateDirectory(MacrosDir);
+
+var writeTool  = new WriteMacroTool(MacrosDir);
+var listTool   = new ListMacrosTool(MacrosDir);
+var deleteTool = new DeleteMacroTool(MacrosDir);
 
 using var connector = new SwConnector();
+using var cts       = new CancellationTokenSource();
 
-// Subscribe to state changes so we can see transitions in the console.
 connector.StateChanged += (_, state) =>
-    Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] State changed → {state}");
+    Log($"SW state → {state}");
 
-using var cts = new CancellationTokenSource();
-
-// Allow Ctrl+C to cancel the launch if SW hangs on startup.
 Console.CancelKeyPress += (_, e) =>
 {
     e.Cancel = true;
-    Console.WriteLine("Cancellation requested...");
+    Log("Cancellation requested...");
     cts.Cancel();
 };
 
 try
 {
-    Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Launching SOLIDWORKS...");
-    await connector.ConnectAsync(SwPath, cts.Token);
+    // ---------------------------------------------------------------- //
+    //  Step 1: Write three test macros
+    // ---------------------------------------------------------------- //
 
-    Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Connected. " +
-        $"Revision: {connector.RevisionNumber}");
-    Console.WriteLine($"Holding for {HoldSeconds}s — press Ctrl+C to cancel early.");
+    Log("Writing test macros...");
+
+    // Macro 1: shows a message box — works whether a document is open or not.
+    await Write("hello_world.swb", "Hello World",
+        "Displays a simple message box to confirm macro execution works.",
+        """
+        Sub main()
+            On Error GoTo ErrorHandler
+            Dim swApp As Object
+            Set swApp = Application.SldWorks
+            swApp.SendMsgToUser "Hello from Nodestar macro runner!"
+            Exit Sub
+        ErrorHandler:
+            MsgBox "Error: " & Err.Description
+        End Sub
+        """);
+
+    // Macro 2: creates a new part document and a 10mm cube.
+    await Write("create_cube.swb", "Create 10mm Cube",
+        "Opens a new part document and creates a 10mm cube via a sketch extrude.",
+        """
+        Sub main()
+            On Error GoTo ErrorHandler
+
+            Dim swApp  As Object
+            Dim swDoc  As Object
+            Dim swSketchMgr As Object
+            Dim swFeatMgr   As Object
+            Dim swSketch    As Object
+
+            Set swApp = Application.SldWorks
+
+            ' Open a new part document.
+            swApp.NewPart
+            Set swDoc = swApp.ActiveDoc
+
+            If swDoc Is Nothing Then
+                MsgBox "Failed to create new part."
+                Exit Sub
+            End If
+
+            Set swSketchMgr = swDoc.SketchManager
+            Set swFeatMgr   = swDoc.FeatureManager
+
+            ' Insert sketch on the Front plane (index 0).
+            swDoc.Extension.SelectByID2 "Front Plane", "PLANE", 0, 0, 0, False, 0, Nothing, 0
+            swSketchMgr.InsertSketch True
+
+            ' Draw a 10mm x 10mm rectangle centred at origin.
+            swSketchMgr.CreateCenterRectangle 0, 0, 0, 0.005, 0.005, 0
+
+            ' Exit sketch and extrude 10mm.
+            swSketchMgr.InsertSketch True
+            swFeatMgr.FeatureExtrusion2 True, False, False, 0, 0, 0.01, 0.01, _
+                False, False, False, False, 0, 0, False, False, False, False, True, True, True, 0, 0, False
+
+            ' swDoc.Save3 1, 0, 0
+            swApp.SendMsgToUser "10mm cube created successfully."
+            Exit Sub
+        ErrorHandler:
+            MsgBox "Cube macro error: " & Err.Description
+        End Sub
+        """);
+
+    // Macro 3: reports the active document name — safe, read-only.
+    await Write("report_active_doc.swb", "Report Active Document",
+        "Reads and reports the name of the currently active SOLIDWORKS document.",
+        """
+        Sub main()
+            On Error GoTo ErrorHandler
+
+            Dim swApp As Object
+            Dim swDoc As Object
+
+            Set swApp = Application.SldWorks
+            Set swDoc = swApp.ActiveDoc
+
+            If swDoc Is Nothing Then
+                swApp.SendMsgToUser "No document is currently active."
+            Else
+                swApp.SendMsgToUser "Active document: " & swDoc.GetTitle()
+            End If
+
+            Exit Sub
+        ErrorHandler:
+            MsgBox "Error: " & Err.Description
+        End Sub
+        """);
+
+    Log("All macros written.");
+
+    // ---------------------------------------------------------------- //
+    //  Step 2: List macros before connecting to SW
+    // ---------------------------------------------------------------- //
+
+    Log("Listing macros (pre-launch):");
+    var listing = await listTool.ExecuteAsync(new Dictionary<string, string>());
+    Console.WriteLine(listing);
+
+    // ---------------------------------------------------------------- //
+    //  Step 3: Launch SOLIDWORKS
+    // ---------------------------------------------------------------- //
+
+    Log("Launching SOLIDWORKS...");
+    await connector.ConnectAsync(SwPath, cts.Token);
+    Log($"Connected. Revision: {connector.RevisionNumber}");
+
+    var runTool = new RunMacroTool(connector, MacrosDir);
+
+    // ---------------------------------------------------------------- //
+    //  Step 4: Run each macro
+    // ---------------------------------------------------------------- //
 
     await Task.Delay(TimeSpan.FromSeconds(HoldSeconds), cts.Token);
+    await Run(runTool, "hello_world.swb");
+
+    // Brief pause between macros — SW needs a moment to settle.
+    await Task.Delay(TimeSpan.FromSeconds(HoldSeconds), cts.Token);
+
+    await Run(runTool, "create_cube.swb");
+    await Task.Delay(TimeSpan.FromSeconds(HoldSeconds), cts.Token);
+
+    await Run(runTool, "report_active_doc.swb");
+    await Task.Delay(TimeSpan.FromSeconds(HoldSeconds), cts.Token);
+
+    // ---------------------------------------------------------------- //
+    //  Step 5: Delete all test macros
+    // ---------------------------------------------------------------- //
+
+    Log("Deleting test macros...");
+    await Delete("hello_world.swb");
+    await Delete("create_cube.swb");
+    await Delete("report_active_doc.swb");
+
+    // Confirm directory is empty.
+    Log("Listing macros (post-delete):");
+    var postDelete = await listTool.ExecuteAsync(new Dictionary<string, string>());
+    Console.WriteLine(postDelete);
 }
 catch (OperationCanceledException)
 {
-    Console.WriteLine("Launch cancelled by user.");
-}
-catch (TimeoutException ex)
-{
-    Console.WriteLine($"TIMEOUT: {ex.Message}");
-}
-catch (FileNotFoundException ex)
-{
-    Console.WriteLine($"BAD PATH: {ex.Message}");
+    Log("Cancelled by user.");
 }
 catch (Exception ex)
 {
-    Console.WriteLine($"UNEXPECTED ERROR: {ex.GetType().Name}: {ex.Message}");
+    Log($"FATAL: {ex.GetType().Name}: {ex.Message}");
 }
 finally
 {
-    Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Disconnecting...");
+    Log("Disconnecting from SOLIDWORKS...");
     await connector.DisconnectAsync();
-    Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Done.");
+    Log("Done.");
+
+    // Clean up the temp macros directory.
+    if (Directory.Exists(MacrosDir))
+        Directory.Delete(MacrosDir, recursive: true);
+}
+
+// ---------------------------------------------------------------- //
+//  Helpers
+// ---------------------------------------------------------------- //
+
+static void Log(string message) =>
+    Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {message}");
+
+async Task Write(string filename, string name, string description, string code)
+{
+    var result = await writeTool.ExecuteAsync(new Dictionary<string, string>
+    {
+        ["filename"]    = filename,
+        ["macro_name"]  = name,
+        ["description"] = description,
+        ["code"]        = code
+    });
+    Log($"write_macro({filename}) → {result}");
+}
+
+async Task Run(RunMacroTool tool, string filename)
+{
+    Log($"run_macro({filename})...");
+    var result = await tool.ExecuteAsync(new Dictionary<string, string>
+    {
+        ["filename"] = filename
+    });
+    Log($"run_macro({filename}) → {result}");
+}
+
+async Task Delete(string filename)
+{
+    var result = await deleteTool.ExecuteAsync(new Dictionary<string, string>
+    {
+        ["filename"] = filename
+    });
+    Log($"delete_macro({filename}) → {result}");
 }

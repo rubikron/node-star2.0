@@ -59,6 +59,15 @@ public sealed class WriteMacroTool : ISwTool
 
     private readonly string _macrosDirectory;
 
+    static WriteMacroTool()
+    {
+        // .NET 5+ only includes UTF and ASCII encodings by default.
+        // Windows-1252 (ANSI) is required for SOLIDWORKS .swb compatibility —
+        // SW's VBA engine treats the UTF-8 BOM as literal characters, causing
+        // a parse error before Sub main() is reached.
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+    }
+
     /// <summary>
     /// Initializes the tool with the path to the macros directory.
     /// </summary>
@@ -126,7 +135,9 @@ public sealed class WriteMacroTool : ISwTool
         if (!filename.EndsWith(".swb", StringComparison.OrdinalIgnoreCase))
             filename += ".swb";
 
-        var fullPath = Path.Combine(_macrosDirectory, filename);
+        var fullPath = Path.GetFullPath(Path.Combine(_macrosDirectory, filename));
+
+        var t1 = Path.GetFullPath(_macrosDirectory);
 
         if (!fullPath.StartsWith(
                 Path.GetFullPath(_macrosDirectory),
@@ -174,7 +185,7 @@ public sealed class WriteMacroTool : ISwTool
             await File.WriteAllTextAsync(
                 fullPath,
                 content,
-                Encoding.UTF8,
+                Encoding.GetEncoding(1252),
                 cancellationToken);
 
             return $"SUCCESS: Macro written to '{filename}'.{errorHandlerWarning}";

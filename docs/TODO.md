@@ -1,3 +1,11 @@
+# ESSENTIAL
+#### Features needed for demo
+- Communicating with external LLM
+- SW App states
+
+# Next prompts
+- Clean up MacroTools code, test 
+
 # Feature ideas
 - Status pill
   - Custom dropdown for status pill
@@ -23,6 +31,7 @@ Other UI Changes
 Macro changes
 - Scan already existing library from a company and import them into the app
 - Store macros in $HOME/Documents/nodestar/macros instead of directory
+- Edit existing macros ? (Or just always overwrite ... editing could save output tokens)
 
 LLM
 - Shorten in-app communication with LLM to waste less tokens
@@ -30,11 +39,3 @@ LLM
 
 Code quality (low priority within token limits)
 - Get Codex to shorten all documentation comments, since Claude likes to yap for some reason
-
-# Next prompts
-- Testing SwTools
-
-# ESSENTIAL
-#### Features needed for demo
-- Communicating with external LLM
-- SW App states
