@@ -3,12 +3,7 @@ using SwBridge.Connection;
 namespace SwBridge.Tools.Macro;
 
 /// <summary>
-/// Lists all SWBasic macro files (.swb) in the macros directory, along
-/// with their embedded metadata headers so the LLM can understand what
-/// each macro does before deciding to run or replace it.
-///
-/// Metadata is read from structured comment lines at the top of each
-/// .swb file using the convention:
+/// Lists <c>.swb</c> macros and reads their header metadata:
 /// <code>
 /// ' @name        Human-readable macro name
 /// ' @description What this macro does and any preconditions.
@@ -16,28 +11,21 @@ namespace SwBridge.Tools.Macro;
 /// ' @author      Who or what wrote it
 /// ' @created     ISO date (yyyy-MM-dd)
 /// </code>
-/// Lines not beginning with a recognised tag are ignored.
-/// Only .swb plain-text macros are listed — binary .swp files are not
-/// supported because the LLM cannot read or write their format.
+/// Binary <c>.swp</c> files are not supported.
 /// </summary>
 public sealed class ListMacrosTool : ISwTool
 {
-    /// <summary>Maximum lines to scan per file when extracting metadata.</summary>
-    /// <remarks>
-    /// Header comments always appear before Sub main(). Capping the scan
-    /// avoids reading large macro bodies for files that omit a header.
-    /// </remarks>
+    /// <summary>
+    /// Maximum header lines to scan before assuming metadata is absent.
+    /// </summary>
     private const int MaxHeaderLines = 30;
 
     private readonly string _macrosDirectory;
 
     /// <summary>
-    /// Initializes the tool with the path to the macros directory.
+    /// Initializes the tool with the macros directory path.
     /// </summary>
-    /// <param name="macrosDirectory">
-    /// Absolute path to the folder where .swb macro files are stored.
-    /// Typically the /macros directory at the repository root.
-    /// </param>
+    /// <param name="macrosDirectory">Directory containing <c>.swb</c> files.</param>
     public ListMacrosTool(string macrosDirectory)
     {
         _macrosDirectory = macrosDirectory;
@@ -81,11 +69,9 @@ public sealed class ListMacrosTool : ISwTool
     }
 
     /// <summary>
-    /// Reads the header metadata from a .swb file and formats it as a
-    /// readable entry for the LLM, falling back gracefully when a tag
-    /// is missing or the file cannot be read.
+    /// Formats one macro entry using the file metadata header.
     /// </summary>
-    /// <param name="filePath">Absolute path to the .swb file.</param>
+    /// <param name="filePath">Absolute path to the <c>.swb</c> file.</param>
     /// <returns>A formatted multi-line string describing the macro.</returns>
     private static string FormatMacroEntry(string filePath)
     {
@@ -107,18 +93,11 @@ public sealed class ListMacrosTool : ISwTool
     }
 
     /// <summary>
-    /// Parses the structured comment header of a .swb file and returns
-    /// a dictionary of tag → value pairs.
-    ///
-    /// Supports multi-line descriptions: if a comment line after a tag
-    /// line has no tag of its own, its content is appended to the most
-    /// recently seen tag's value.
+    /// Parses a macro header into tag/value pairs.
+    /// Continuation lines are appended to the previous tag.
     /// </summary>
-    /// <param name="filePath">Absolute path to the .swb file to parse.</param>
-    /// <returns>
-    /// Dictionary of lowercase tag names to their extracted values.
-    /// Empty if the file cannot be read or contains no recognised tags.
-    /// </returns>
+    /// <param name="filePath">Absolute path to the <c>.swb</c> file to parse.</param>
+    /// <returns>Extracted tags, or an empty dictionary.</returns>
     private static Dictionary<string, string> ExtractMetadata(string filePath)
     {
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -157,14 +136,14 @@ public sealed class ListMacrosTool : ISwTool
                 }
                 else if (lastTag is not null && content.Length > 0)
                 {
-                    // Continuation line — append to the previous tag's value.
+                    // Continuation line - append to the previous tag's value.
                     result[lastTag] = result[lastTag] + " " + content;
                 }
             }
         }
         catch (IOException)
         {
-            // File locked or unreadable — return whatever we have so far.
+            // File locked or unreadable - return whatever we have so far.
         }
 
         return result;

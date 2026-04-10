@@ -15,7 +15,7 @@ public interface ISwConnector
     ISldWorks? Application { get; }
 
     /// <summary>
-    /// Gets the SOLIDWORKS revision string (for example "32.1.0") once connected,
+    /// Gets the SOLIDWORKS revision string once connected,
     /// or <see langword="null"/> if not yet connected.
     /// </summary>
     string? RevisionNumber { get; }
@@ -26,7 +26,7 @@ public interface ISwConnector
     SwConnectionState State { get; }
 
     /// <summary>
-    /// Gets a value indicating whether the spawned SOLIDWORKS process is still running.
+    /// Gets whether the tracked SOLIDWORKS process is still running.
     /// </summary>
     bool HasActiveProcess { get; }
 
@@ -36,26 +36,19 @@ public interface ISwConnector
     event EventHandler<SwConnectionState> StateChanged;
 
     /// <summary>
-    /// Spawns a new SOLIDWORKS process and waits until the application
-    /// is ready to accept API calls.
+    /// Launches or attaches to SOLIDWORKS and waits for it to be ready.
     /// </summary>
-    /// <param name="swExecutablePath">
-    /// Full path to <c>SLDWORKS.exe</c>.
-    /// </param>
-    /// <param name="cancellationToken">
-    /// Token used to cancel the launch operation.
-    /// </param>
+    /// <param name="swExecutablePath">Path to a SOLIDWORKS launch target.</param>
+    /// <param name="cancellationToken">Token used to cancel the launch operation</param>
     Task ConnectAsync(string swExecutablePath, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Cleanly shuts down the SOLIDWORKS instance that was spawned
-    /// by this connector and releases all COM references.
+    /// Closes the tracked SOLIDWORKS instance and releases COM references.
     /// </summary>
     Task DisconnectAsync();
 
     /// <summary>
-    /// Releases this application's handles and COM references without closing
-    /// the spawned SOLIDWORKS process.
+    /// Releases COM references without closing SOLIDWORKS.
     /// </summary>
     Task DetachAsync();
 
@@ -66,9 +59,7 @@ public interface ISwConnector
     /// <param name="top">The target top screen coordinate.</param>
     /// <param name="width">The target window width.</param>
     /// <param name="height">The target window height.</param>
-    /// <param name="cancellationToken">
-    /// Token used to cancel the window lookup and move operation.
-    /// </param>
+    /// <param name="cancellationToken">Token used to cancel the launch operation</param>
     Task ResizeMainWindowAsync(
         int left,
         int top,

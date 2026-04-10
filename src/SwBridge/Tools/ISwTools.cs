@@ -2,50 +2,27 @@
 namespace SwBridge.Tools;
 
 /// <summary>
-/// Defines the contract for a single discrete operation exposed to the
-/// LLM orchestrator as a callable tool. Each implementation wraps one
-/// logical action — either a SOLIDWORKS session operation or a macro
-/// lifecycle action (write, run, list, delete).
-///
-/// Tool names must be unique across the registry and should follow
-/// snake_case convention to match LLM tool-use schema expectations
-/// (e.g. "run_macro", "get_sw_state").
+/// Defines the contract for a single SOLIDWORKS tool callable by the orchestrator.
+/// Tool names should be unique and use snake_case.
 /// </summary>
 public interface ISwTool
 {
     /// <summary>
-    /// Gets the unique snake_case name of this tool as it will appear
-    /// in the LLM tool schema (e.g. "run_macro", "write_macro").
+    /// Gets the tool name exposed to the LLM.
     /// </summary>
     string Name { get; }
 
     /// <summary>
-    /// Gets the human-readable description of what this tool does.
-    /// This is passed directly to the LLM as the tool description,
-    /// so it should be precise about what parameters are expected
-    /// and what the return value means.
+    /// Gets the human-readable tool description sent to the LLM.
     /// </summary>
     string Description { get; }
 
     /// <summary>
-    /// Executes the tool with the given parameters and returns a
-    /// plain-text result that will be passed back to the LLM as
-    /// the tool result. Errors should be returned as descriptive
-    /// strings rather than thrown, so the LLM can self-correct.
+    /// Executes the tool and returns a plain-text result for the LLM.
     /// </summary>
-    /// <param name="parameters">
-    /// Key-value pairs matching the parameter schema defined in
-    /// <see cref="Description"/>. The orchestrator is responsible
-    /// for deserializing the LLM's JSON tool call into this dict.
-    /// </param>
-    /// <param name="cancellationToken">
-    /// Token to cancel long-running operations such as macro execution.
-    /// </param>
-    /// <returns>
-    /// A plain-text result string. Return a description of success,
-    /// or an error message prefixed with "ERROR:" so the LLM knows
-    /// to retry or replan.
-    /// </returns>
+    /// <param name="parameters">Arguments matching the tool schema.</param>
+    /// <param name="cancellationToken">Token used to cancel long-running work.</param>
+    /// <returns>A success string or an <c>ERROR:</c> message.</returns>
     Task<string> ExecuteAsync(
         IReadOnlyDictionary<string, string> parameters,
         CancellationToken cancellationToken = default);
