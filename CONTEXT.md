@@ -94,3 +94,4 @@
 - `LlmOrchestrator` is the remote-LLM transport layer.
 - The macro toolchain is currently the most complete execution path.
 - The WPF UI is already focused on the intended product shape: a sidecar AI assistant for SOLIDWORKS.
+- After large changes, run a minimal test build of the App (which builds SwBridge and LlmOrchestrator) to check for errors.
