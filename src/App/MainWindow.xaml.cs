@@ -300,16 +300,20 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Snaps the window to the right fifth of the current work area.
+    /// Snaps the window to the right fifth of the primary work area.
+    /// SystemParameters.WorkArea is already in WPF DIPs and is reliable on any DPI setting.
     /// </summary>
     private void DockToRightSideOfScreen()
     {
         var workArea = SystemParameters.WorkArea;
         var desiredWidth = Math.Round(workArea.Width * DockedWidthRatio);
 
+        // Keep MinWidth below the desired docked width so the ratio is always honoured.
+        MinWidth = Math.Max(260, Math.Round(desiredWidth * 0.75));
+
         Width = desiredWidth;
         Height = workArea.Height;
-        Left = workArea.Right - Width;
+        Left = workArea.Right - desiredWidth;
         Top = workArea.Top;
     }
 
@@ -440,6 +444,8 @@ public partial class MainWindow : Window
 
     /// <summary>
     /// Resizes the SOLIDWORKS window to occupy the space left of the Nodestar panel.
+    /// Converts WPF DIPs to physical pixels before calling SetWindowPos, because
+    /// SetWindowPos always works in physical pixels regardless of DPI settings.
     /// </summary>
     private async Task SyncSolidWorksWindowAsync()
     {
@@ -451,20 +457,23 @@ public partial class MainWindow : Window
         }
 
         var workArea = SystemParameters.WorkArea;
-        var solidWorksWidth = (int)Math.Round(Left - workArea.Left);
-        if (solidWorksWidth <= 0)
+        var swWidthDips = Left - workArea.Left;
+        if (swWidthDips <= 0)
         {
             return;
         }
+
+        // SetWindowPos uses physical pixels — multiply DIPs by the DPI scale.
+        var (sx, sy) = GetDpiScale();
 
         try
         {
             _isSynchronizingSolidWorksWindow = true;
             await _connector.ResizeMainWindowAsync(
-                (int)Math.Round(workArea.Left),
-                (int)Math.Round(workArea.Top),
-                solidWorksWidth,
-                (int)Math.Round(workArea.Height));
+                (int)Math.Round(workArea.Left   * sx),
+                (int)Math.Round(workArea.Top    * sy),
+                (int)Math.Round(swWidthDips     * sx),
+                (int)Math.Round(workArea.Height * sy));
         }
         catch
         {
@@ -478,12 +487,13 @@ public partial class MainWindow : Window
 
     /// <summary>
     /// Removes the decorative inset when maximized so the shell fills the bounds cleanly.
+    /// Left margin is 0 so the panel sits flush against the SOLIDWORKS window edge.
     /// </summary>
     private void UpdateWindowSurfaceMargin()
     {
         WindowSurface.Margin = WindowState == WindowState.Maximized
             ? new Thickness(0)
-            : new Thickness(10);
+            : new Thickness(0, 6, 6, 6);
     }
 
     /// <summary>
@@ -661,6 +671,17 @@ public partial class MainWindow : Window
     private void UpdateSendButtonState()
     {
         SendButton.IsEnabled = !string.IsNullOrWhiteSpace(PromptTextBox.Text);
+    }
+
+    /// <summary>
+    /// Returns the DPI scale for the monitor this window is currently on
+    /// (physical pixels per WPF DIP). VisualTreeHelper.GetDpi is reliable
+    /// after the window is loaded and works correctly with per-monitor DPI.
+    /// </summary>
+    private (double X, double Y) GetDpiScale()
+    {
+        var dpi = VisualTreeHelper.GetDpi(this);
+        return (dpi.DpiScaleX, dpi.DpiScaleY);
     }
 
     /// <summary>
