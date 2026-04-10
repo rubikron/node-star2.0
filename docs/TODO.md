@@ -20,9 +20,19 @@ Other UI Changes
 - Align top right buttons with app named and status pill
 - Better button shapes/sizes
 
+Macro changes
+- Scan already existing library from a company and import them into the app
+- Store macros in $HOME/Documents/nodestar/macros instead of directory
+
+LLM
+- Shorten in-app communication with LLM to waste less tokens
+  - e.g. shorten list_macros output (remove modified, created, author ?), error outputs, function descriptions
+
+Code quality (low priority within token limits)
+- Get Codex to shorten all documentation comments, since Claude likes to yap for some reason
+
 # Next prompts
-- SwTools hooks
-- Testing buttons in-app
+- Testing SwTools
 
 # ESSENTIAL
 #### Features needed for demo
