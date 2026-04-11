@@ -618,51 +618,95 @@ public partial class MainWindow : Window
 
     /// <summary>
     /// Creates a styled transcript bubble and appends it to the conversation panel.
+    /// System messages render as a centered muted note; user messages as a right-aligned
+    /// accent bubble; assistant messages as a left-aligned panel bubble with a label.
     /// </summary>
     private void AddMessageBubble(string author, string message, bool isUserMessage)
     {
-        var bubbleBackground = (Brush)new BrushConverter().ConvertFromString(
-            isUserMessage ? "#1F3A5F" : "#131C2E")!;
-        var bubbleBorder = (Brush)new BrushConverter().ConvertFromString(
-            isUserMessage ? "#31598A" : "#243042")!;
-        var bubbleAlignment = isUserMessage ? HorizontalAlignment.Right : HorizontalAlignment.Left;
+        // ── System / status note ──────────────────────────────────────────────
+        if (author == "system")
+        {
+            var noteBlock = new TextBlock
+            {
+                Text = message,
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = (Brush)FindResource("TextSecondaryBrush"),
+                FontSize = 11,
+                FontStyle = FontStyles.Italic,
+                TextAlignment = TextAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                Margin = new Thickness(8, 0, 8, 12)
+            };
+            ConversationPanel.Children.Add(noteBlock);
+            return;
+        }
 
-        var authorBlock = new TextBlock
+        // ── User message ──────────────────────────────────────────────────────
+        if (isUserMessage)
+        {
+            var messageBlock = new TextBlock
+            {
+                Text = message,
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = (Brush)FindResource("TextPrimaryBrush"),
+                FontSize = 13,
+                LineHeight = 20
+            };
+
+            var bubble = new Border
+            {
+                HorizontalAlignment = HorizontalAlignment.Right,
+                MaxWidth = 300,
+                Margin = new Thickness(40, 0, 0, 12),
+                Padding = new Thickness(14, 10, 14, 10),
+                CornerRadius = new CornerRadius(16, 16, 4, 16),
+                Background = (Brush)new BrushConverter().ConvertFromString("#1A3A6E")!,
+                BorderBrush = (Brush)new BrushConverter().ConvertFromString("#2D5A9A")!,
+                BorderThickness = new Thickness(1),
+                Child = messageBlock
+            };
+
+            ConversationPanel.Children.Add(bubble);
+            return;
+        }
+
+        // ── Assistant message ─────────────────────────────────────────────────
+        var labelBlock = new TextBlock
         {
             Text = author.ToUpperInvariant(),
-            FontSize = 11,
+            FontSize = 10,
             FontWeight = FontWeights.SemiBold,
-            Foreground = (Brush)FindResource("TextSecondaryBrush"),
-            Margin = new Thickness(0, 0, 0, 8)
+            Foreground = (Brush)FindResource("AccentBrush"),
+            Margin = new Thickness(0, 0, 0, 6)
         };
 
-        var messageBlock = new TextBlock
+        var bodyBlock = new TextBlock
         {
             Text = message,
             TextWrapping = TextWrapping.Wrap,
             Foreground = (Brush)FindResource("TextPrimaryBrush"),
-            FontSize = 14,
-            LineHeight = 22
+            FontSize = 13,
+            LineHeight = 20
         };
 
         var contentPanel = new StackPanel();
-        contentPanel.Children.Add(authorBlock);
-        contentPanel.Children.Add(messageBlock);
+        contentPanel.Children.Add(labelBlock);
+        contentPanel.Children.Add(bodyBlock);
 
-        var bubble = new Border
+        var assistantBubble = new Border
         {
-            HorizontalAlignment = bubbleAlignment,
+            HorizontalAlignment = HorizontalAlignment.Left,
             MaxWidth = 320,
-            Margin = new Thickness(0, 0, 0, 14),
-            Padding = new Thickness(16, 14, 16, 14),
-            CornerRadius = new CornerRadius(18),
-            Background = bubbleBackground,
-            BorderBrush = bubbleBorder,
+            Margin = new Thickness(0, 0, 40, 12),
+            Padding = new Thickness(14, 10, 14, 10),
+            CornerRadius = new CornerRadius(16, 16, 16, 4),
+            Background = (Brush)new BrushConverter().ConvertFromString("#0E1928")!,
+            BorderBrush = (Brush)new BrushConverter().ConvertFromString("#1C2E48")!,
             BorderThickness = new Thickness(1),
             Child = contentPanel
         };
 
-        ConversationPanel.Children.Add(bubble);
+        ConversationPanel.Children.Add(assistantBubble);
     }
 
     /// <summary>
