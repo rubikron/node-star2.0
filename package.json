@@ -1,0 +1,48 @@
+{
+  "name": "star2.0",
+  "version": "1.0.0",
+  "description": "Official Repository of the Node-Star Company",
+  "main": "index.js",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "type-check": "tsc --noEmit",
+    "test": "vitest"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mihitp/node-star2.0.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/mihitp/node-star2.0/issues"
+  },
+  "homepage": "https://github.com/mihitp/node-star2.0#readme",
+  "dependencies": {
+    "@langchain/anthropic": "^1.3.26",
+    "@langchain/community": "^1.1.27",
+    "@langchain/core": "^1.1.39",
+    "@langchain/langgraph": "^1.2.8",
+    "@langchain/openai": "^1.4.4",
+    "@langchain/pinecone": "^1.0.1",
+    "@neondatabase/serverless": "^1.0.2",
+    "@pinecone-database/pinecone": "^7.2.0",
+    "next": "^14.2.35",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "eslint": "^9.39.4",
+    "eslint-config-next": "^16.2.3",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.4"
+  }
+}
