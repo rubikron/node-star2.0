@@ -10,6 +10,8 @@
 
 # Next to work on (Alexis)
 - SW App states (TESTING)
+  - Snapshots are hashed based on payload ; Because this doesn't include previous snapshot ID, empty snapshots have same IDs. Should probably fix soon.
+  - "__ComObject" in output ; figure out what this is
 
 # Feature ideas
 Priority is indicated with this key:

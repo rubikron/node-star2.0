@@ -1,33 +1,56 @@
+using System.Text.Json;
 using SwBridge.Models;
 using SwBridge.Tools.Session;
 
 namespace SwBridge.Tests;
 
 /// <summary>
-/// Covers the compact SOLIDWORKS state snapshot and diff contract.
+/// Covers the readable SOLIDWORKS state snapshot and diff contract.
 /// </summary>
 public sealed class SwStateDiffTests
 {
     /// <summary>
-    /// Verifies that unchanged snapshots generate an empty patch payload.
+    /// Verifies that unchanged snapshots generate an explicit empty patch envelope.
     /// </summary>
     [Fact]
-    public void BuildPatch_WhenStateIsUnchanged_ReturnsEmptyPatch()
+    public void BuildPatch_WhenStateIsUnchanged_ReturnsExplicitEmptyPatchEnvelope()
     {
         var state = CreateState();
 
         var patch = state.BuildPatch(state);
 
         Assert.True(patch.IsEmpty);
+        Assert.Equal("patch", patch.Mode);
         Assert.Equal(state.SnapshotToken, patch.SnapshotToken);
         Assert.Equal(state.SnapshotToken, patch.PreviousSnapshotToken);
+    }
+
+    /// <summary>
+    /// Verifies that serialized full snapshots use the readable field names.
+    /// </summary>
+    [Fact]
+    public void ToFullResponseJson_UsesReadableFieldNames()
+    {
+        var state = CreateState();
+
+        using var document = JsonDocument.Parse(state.ToFullResponseJson());
+        var root = document.RootElement;
+        var stateElement = root.GetProperty("state");
+
+        Assert.Equal("full", root.GetProperty("mode").GetString());
+        Assert.True(stateElement.TryGetProperty("snapshot", out _));
+        Assert.True(stateElement.TryGetProperty("SwVersion", out _));
+        Assert.True(stateElement.TryGetProperty("activeDoc", out _));
+        Assert.True(stateElement.TryGetProperty("documents", out _));
+        Assert.True(stateElement.TryGetProperty("selection", out _));
+        Assert.True(stateElement.TryGetProperty("activeConfig", out _));
     }
 
     /// <summary>
     /// Verifies that switching the active document only changes the expected fields.
     /// </summary>
     [Fact]
-    public void BuildPatch_WhenActiveDocumentChanges_UpdatesActiveDocumentAndOpenDocumentPatch()
+    public void BuildPatch_WhenActiveDocumentChanges_UpdatesActiveDocumentAndDocumentPatch()
     {
         var previous = CreateState(
             activeDocument: new SwDocumentState("c:\\parts\\a.sldprt", "A", "C:\\parts\\a.sldprt", "prt", "Default"),
@@ -94,6 +117,24 @@ public sealed class SwStateDiffTests
         Assert.Equal("a", updated[0].Id);
         Assert.Single(removed);
         Assert.Equal("b", removed[0]);
+    }
+
+    /// <summary>
+    /// Verifies that serialized patch payloads use the readable field names.
+    /// </summary>
+    [Fact]
+    public void ToPatchResponseJson_UsesReadableFieldNames()
+    {
+        var previous = CreateState(activeConfiguration: "Default");
+        var current = CreateState(activeConfiguration: "Alt");
+
+        using var document = JsonDocument.Parse(current.ToPatchResponseJson(previous));
+        var root = document.RootElement;
+
+        Assert.Equal("patch", root.GetProperty("mode").GetString());
+        Assert.True(root.TryGetProperty("prevSnap", out _));
+        Assert.True(root.TryGetProperty("snapshot", out _));
+        Assert.True(root.TryGetProperty("activeConfig", out _));
     }
 
     /// <summary>

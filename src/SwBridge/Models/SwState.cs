@@ -22,37 +22,37 @@ public sealed record SwState
     /// <summary>
     /// Gets the deterministic token for this snapshot.
     /// </summary>
-    [JsonPropertyName("t")]
+    [JsonPropertyName("snapshot")]
     public string SnapshotToken { get; init; } = string.Empty;
 
     /// <summary>
     /// Gets the connected SOLIDWORKS revision number when available.
     /// </summary>
-    [JsonPropertyName("rev")]
+    [JsonPropertyName("SwVersion")]
     public string? RevisionNumber { get; init; }
 
     /// <summary>
     /// Gets the active document summary, or <see langword="null"/> if no document is active.
     /// </summary>
-    [JsonPropertyName("act")]
+    [JsonPropertyName("activeDoc")]
     public SwDocumentState? ActiveDocument { get; init; }
 
     /// <summary>
     /// Gets the currently open documents in deterministic order.
     /// </summary>
-    [JsonPropertyName("docs")]
+    [JsonPropertyName("documents")]
     public IReadOnlyList<SwDocumentState> OpenDocuments { get; init; } = [];
 
     /// <summary>
     /// Gets the current selection summaries in deterministic order.
     /// </summary>
-    [JsonPropertyName("sel")]
+    [JsonPropertyName("selection")]
     public IReadOnlyList<SwSelectionState> Selection { get; init; } = [];
 
     /// <summary>
     /// Gets the active configuration name for the active document when available.
     /// </summary>
-    [JsonPropertyName("cfg")]
+    [JsonPropertyName("activeConfig")]
     public string? ActiveConfigurationName { get; init; }
 
     /// <summary>
@@ -163,7 +163,7 @@ public sealed record SwState
         JsonSerializer.Serialize(BuildPatch(previous), JsonOptions);
 
     /// <summary>
-    /// Deserializes a snapshot from either a bare state payload or a full response envelope.
+    /// Deserializes a snapshot from the current full response envelope.
     /// </summary>
     /// <param name="json">Serialized JSON from a prior state tool response.</param>
     /// <returns>The deserialized snapshot, or <see langword="null"/> if parsing fails.</returns>
@@ -182,7 +182,7 @@ public sealed record SwState
                 return null;
             }
 
-            if (root["s"] is JsonNode stateNode)
+            if (root["state"] is JsonNode stateNode)
             {
                 return stateNode.Deserialize<SwState>(JsonOptions);
             }
@@ -217,19 +217,19 @@ public sealed record SwState
 
     private sealed record SnapshotTokenPayload
     {
-        [JsonPropertyName("rev")]
+        [JsonPropertyName("SwVersion")]
         public string? RevisionNumber { get; init; }
 
-        [JsonPropertyName("act")]
+        [JsonPropertyName("activeDoc")]
         public SwDocumentState? ActiveDocument { get; init; }
 
-        [JsonPropertyName("docs")]
+        [JsonPropertyName("documents")]
         public IReadOnlyList<SwDocumentState> OpenDocuments { get; init; } = [];
 
-        [JsonPropertyName("sel")]
+        [JsonPropertyName("selection")]
         public IReadOnlyList<SwSelectionState> Selection { get; init; } = [];
 
-        [JsonPropertyName("cfg")]
+        [JsonPropertyName("activeConfig")]
         public string? ActiveConfigurationName { get; init; }
     }
 }
@@ -241,13 +241,13 @@ public sealed record SwState
 /// <param name="Title">Current document title.</param>
 /// <param name="Path">Document path when saved to disk.</param>
 /// <param name="DocumentType">Compact document type code.</param>
-/// <param name="ActiveConfigurationName">Active configuration for the document when available.</param>
+/// <param name="ConfigurationName">Active configuration for the document when available.</param>
 public sealed record SwDocumentState(
     [property: JsonPropertyName("id")] string Id,
-    [property: JsonPropertyName("ttl")] string? Title,
-    [property: JsonPropertyName("pth")] string? Path,
-    [property: JsonPropertyName("typ")] string DocumentType,
-    [property: JsonPropertyName("cfg")] string? ActiveConfigurationName);
+    [property: JsonPropertyName("title")] string? Title,
+    [property: JsonPropertyName("path")] string? Path,
+    [property: JsonPropertyName("type")] string DocumentType,
+    [property: JsonPropertyName("config")] string? ConfigurationName);
 
 /// <summary>
 /// Represents a compact summary of one selected entity in the active document.
@@ -258,11 +258,11 @@ public sealed record SwDocumentState(
 /// <param name="Name">Best-effort human-readable selection name.</param>
 /// <param name="Mark">Selection mark when available.</param>
 public sealed record SwSelectionState(
-    [property: JsonPropertyName("k")] string Key,
-    [property: JsonPropertyName("doc")] string DocumentId,
-    [property: JsonPropertyName("typ")] string SelectionType,
-    [property: JsonPropertyName("n")] string? Name,
-    [property: JsonPropertyName("m")] int? Mark);
+    [property: JsonPropertyName("key")] string Key,
+    [property: JsonPropertyName("documentId")] string DocumentId,
+    [property: JsonPropertyName("type")] string SelectionType,
+    [property: JsonPropertyName("name")] string? Name,
+    [property: JsonPropertyName("mark")] int? Mark);
 
 /// <summary>
 /// Represents the full-state response envelope returned by the session tool.
@@ -272,13 +272,13 @@ public sealed record SwStateFullResponse
     /// <summary>
     /// Gets the response mode.
     /// </summary>
-    [JsonPropertyName("m")]
+    [JsonPropertyName("mode")]
     public string Mode { get; init; } = "full";
 
     /// <summary>
     /// Gets the current full snapshot.
     /// </summary>
-    [JsonPropertyName("s")]
+    [JsonPropertyName("state")]
     public SwState State { get; init; } = SwState.Create(null, null, null, null, null);
 }
 
@@ -290,49 +290,49 @@ public sealed record SwStatePatch
     /// <summary>
     /// Gets the response mode.
     /// </summary>
-    [JsonPropertyName("m")]
+    [JsonPropertyName("mode")]
     public string Mode { get; init; } = "patch";
 
     /// <summary>
     /// Gets the previous snapshot token when one was available.
     /// </summary>
-    [JsonPropertyName("p")]
+    [JsonPropertyName("prevSnap")]
     public string? PreviousSnapshotToken { get; set; }
 
     /// <summary>
     /// Gets the current snapshot token.
     /// </summary>
-    [JsonPropertyName("t")]
+    [JsonPropertyName("snapshot")]
     public string SnapshotToken { get; set; } = string.Empty;
 
     /// <summary>
     /// Gets the updated SOLIDWORKS revision number when it changed.
     /// </summary>
-    [JsonPropertyName("rev")]
+    [JsonPropertyName("SwVersion")]
     public string? RevisionNumber { get; set; }
 
     /// <summary>
     /// Gets the updated active document when it changed.
     /// </summary>
-    [JsonPropertyName("act")]
+    [JsonPropertyName("activeDoc")]
     public SwDocumentState? ActiveDocument { get; set; }
 
     /// <summary>
     /// Gets document collection changes when the open-document set changed.
     /// </summary>
-    [JsonPropertyName("docs")]
+    [JsonPropertyName("documents")]
     public SwDocumentCollectionPatch? OpenDocuments { get; set; }
 
     /// <summary>
     /// Gets the updated selection list when the selection changed.
     /// </summary>
-    [JsonPropertyName("sel")]
+    [JsonPropertyName("selection")]
     public IReadOnlyList<SwSelectionState>? Selection { get; set; }
 
     /// <summary>
     /// Gets the updated active configuration name when it changed.
     /// </summary>
-    [JsonPropertyName("cfg")]
+    [JsonPropertyName("activeConfig")]
     public string? ActiveConfigurationName { get; set; }
 
     /// <summary>
@@ -355,19 +355,19 @@ public sealed record SwDocumentCollectionPatch
     /// <summary>
     /// Gets newly opened documents.
     /// </summary>
-    [JsonPropertyName("add")]
+    [JsonPropertyName("added")]
     public IReadOnlyList<SwDocumentState>? Added { get; init; }
 
     /// <summary>
     /// Gets updated documents whose tracked fields changed.
     /// </summary>
-    [JsonPropertyName("upd")]
+    [JsonPropertyName("updated")]
     public IReadOnlyList<SwDocumentState>? Updated { get; init; }
 
     /// <summary>
     /// Gets removed document identities.
     /// </summary>
-    [JsonPropertyName("rem")]
+    [JsonPropertyName("removed")]
     public IReadOnlyList<string>? Removed { get; init; }
 
     /// <summary>

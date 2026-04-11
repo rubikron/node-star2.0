@@ -147,7 +147,8 @@ try
     Log($"Connected. Revision: {connector.RevisionNumber}");
 
     var runTool = new RunMacroTool(connector, MacrosDir);
-    var stateTool = new GetSwStateTool(connector);
+    var stateCollector = new SwStateCollector(message => Log($"SW STATE DIAG: {message}"));
+    var stateTool = new GetSwStateTool(connector, stateCollector);
 
     Log("Initial full state snapshot:");
     Console.WriteLine(
@@ -161,18 +162,21 @@ try
 
     await Task.Delay(TimeSpan.FromSeconds(HoldSeconds), cts.Token);
     await Run(runTool, "hello_world.swb");
-    await DumpPatch(stateTool);
 
     // Brief pause between macros — SW needs a moment to settle.
     await Task.Delay(TimeSpan.FromSeconds(HoldSeconds), cts.Token);
 
     await Run(runTool, "create_cube.swb");
-    await DumpPatch(stateTool);
+    await DumpSnapshot(stateTool, "Update snapshot after create_cube:", "patch");
     await Task.Delay(TimeSpan.FromSeconds(HoldSeconds), cts.Token);
 
     await Run(runTool, "report_active_doc.swb");
-    await DumpPatch(stateTool);
     await Task.Delay(TimeSpan.FromSeconds(HoldSeconds), cts.Token);
+
+    await DumpSnapshot(stateTool, "No-change update snapshot before final full snapshot:", "patch");
+    await Task.Delay(TimeSpan.FromSeconds(HoldSeconds), cts.Token);
+
+    await DumpSnapshot(stateTool, "Final full state snapshot:", "full");
 
     // ---------------------------------------------------------------- //
     //  Step 5: Delete all test macros
@@ -245,11 +249,11 @@ async Task Delete(string filename)
     Log($"delete_macro({filename}) → {result}");
 }
 
-async Task DumpPatch(GetSwStateTool tool)
+async Task DumpSnapshot(GetSwStateTool tool, string label, string mode)
 {
-    Log("get_sw_state(mode=patch)...");
+    Log(label);
     var result = await tool.ExecuteAsync(
-        new Dictionary<string, string> { ["mode"] = "patch" },
+        new Dictionary<string, string> { ["mode"] = mode },
         cts.Token);
     Console.WriteLine(result);
 }

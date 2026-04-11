@@ -47,7 +47,7 @@
   - resize the SOLIDWORKS main window
 - `SwBridge` now includes unified session-state gathering for LLM context:
   - `Tools/Session/SwStateCollector.cs` is the single collector for active document, open documents, selection, and active configuration
-  - `Models/SwState.cs` defines the compact snapshot contract plus diff/patch payload types
+  - `Models/SwState.cs` defines the readable compact snapshot contract plus diff/patch payload types
   - `Tools/Session/GetSwStateTool.cs` returns either a full compact JSON snapshot or a compact field-level patch against the previous snapshot
   - document identities prefer normalized full paths and fall back to runtime session tokens for unsaved documents
 
@@ -74,7 +74,7 @@
   - writes several sample macros
   - launches or connects to SOLIDWORKS
   - runs the macros
-  - captures an initial `get_sw_state` full snapshot and later patch snapshots between macro runs
+  - captures an initial `get_sw_state` full snapshot, a changed patch after `create_cube`, a no-change patch before the final full snapshot, and then a final full snapshot
   - deletes them afterward
 - This is the best reference for the bridge's currently working flow.
 

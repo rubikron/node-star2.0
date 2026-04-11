@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Runtime.InteropServices;
 using SolidWorks.Interop.sldworks;
 using SolidWorks.Interop.swconst;
@@ -11,6 +12,20 @@ namespace SwBridge.Tools.Session;
 /// </summary>
 public sealed class SwStateCollector
 {
+    private readonly Action<string>? _diagnosticSink;
+
+    /// <summary>
+    /// Initializes the collector.
+    /// </summary>
+    /// <param name="diagnosticSink">
+    /// Optional sink for non-fatal COM diagnostics. This is mainly useful in
+    /// manual integration runs where swallowed interop failures need to be visible.
+    /// </param>
+    public SwStateCollector(Action<string>? diagnosticSink = null)
+    {
+        _diagnosticSink = diagnosticSink;
+    }
+
     /// <summary>
     /// Builds a compact state snapshot from the current SOLIDWORKS session.
     /// </summary>
@@ -60,47 +75,59 @@ public sealed class SwStateCollector
         return $"unsaved:{fallbackToken}";
     }
 
-    private static IReadOnlyList<SwDocumentState> CollectOpenDocuments(ISldWorks app)
+    private IReadOnlyList<SwDocumentState> CollectOpenDocuments(ISldWorks app)
     {
         var documents = new List<SwDocumentState>();
-        dynamic dynamicApp = app;
+        var current = SafeGet(
+            "ISldWorks.IGetFirstDocument2",
+            () => app.IGetFirstDocument2());
 
-        foreach (var candidate in EnumerateComArray(SafeGet(() => dynamicApp.GetDocuments())))
+        while (current is not null)
         {
-            var document = TryCollectDocument(candidate);
+            var document = TryCollectDocument(current);
             if (document is not null)
             {
                 documents.Add(document);
             }
+
+            current = SafeGet(
+                "IModelDoc2.IGetNext",
+                () => current.IGetNext());
         }
 
         return documents
+            .DistinctBy(static doc => doc.Id, StringComparer.Ordinal)
             .OrderBy(static doc => doc.Id, StringComparer.Ordinal)
             .ToArray();
     }
 
-    private static object? GetActiveDocument(ISldWorks app)
-    {
-        dynamic dynamicApp = app;
-        return SafeGet(() => dynamicApp.ActiveDoc) ?? SafeGet(() => dynamicApp.IActiveDoc2);
-    }
+    private IModelDoc2? GetActiveDocument(ISldWorks app) =>
+        SafeGet(
+            "ISldWorks.IActiveDoc2",
+            () => app.IActiveDoc2);
 
-    private static IReadOnlyList<SwSelectionState> CollectSelection(SwDocumentState? activeDocument, object? activeDocumentCom)
+    private IReadOnlyList<SwSelectionState> CollectSelection(
+        SwDocumentState? activeDocument,
+        IModelDoc2? activeDocumentCom)
     {
         if (activeDocument is null || activeDocumentCom is null)
         {
             return [];
         }
 
-        dynamic doc = activeDocumentCom;
-        var selectionManager = SafeGet(() => doc.SelectionManager);
+        var selectionManager = SafeGet(
+            "IModelDoc2.SelectionManager",
+            () => activeDocumentCom.SelectionManager as ISelectionMgr);
+
         if (selectionManager is null)
         {
             return [];
         }
 
-        dynamic dynamicSelectionManager = selectionManager;
-        var count = SafeGetInt(() => dynamicSelectionManager.GetSelectedObjectCount2(-1));
+        var count = SafeGetInt(
+            "ISelectionMgr.GetSelectedObjectCount2",
+            () => selectionManager.GetSelectedObjectCount2(-1));
+
         if (count <= 0)
         {
             return [];
@@ -110,9 +137,16 @@ public sealed class SwStateCollector
 
         for (var index = 1; index <= count; index++)
         {
-            var selectedObject = SafeGet(() => dynamicSelectionManager.GetSelectedObject6(index, -1));
-            var selectionType = SafeGetInt(() => dynamicSelectionManager.GetSelectedObjectType3(index, -1));
-            var mark = SafeGetNullableInt(() => dynamicSelectionManager.GetSelectedObjectMark(index));
+            var selectedObject = SafeGet(
+                $"ISelectionMgr.GetSelectedObject6[{index}]",
+                () => selectionManager.GetSelectedObject6(index, -1));
+            var selectionType = SafeGetInt(
+                $"ISelectionMgr.GetSelectedObjectType3[{index}]",
+                () => selectionManager.GetSelectedObjectType3(index, -1));
+            var mark = SafeGetNullableInt(
+                $"ISelectionMgr.GetSelectedObjectMark[{index}]",
+                () => selectionManager.GetSelectedObjectMark(index));
+
             var typeCode = MapSelectionType(selectionType);
             var name = TryGetBestObjectName(selectedObject);
             var keyName = string.IsNullOrWhiteSpace(name)
@@ -133,45 +167,49 @@ public sealed class SwStateCollector
             .ToArray();
     }
 
-    private static SwDocumentState? TryCollectDocument(object? candidate)
-    {
-        if (candidate is null)
-        {
-            return null;
-        }
-
-        dynamic document = candidate;
-
-        var path = Normalize(SafeGetString(() => document.GetPathName()));
-        var title = Normalize(SafeGetString(() => document.GetTitle()));
-        var typeCode = MapDocumentType(SafeGetInt(() => document.GetType()));
-        var configuration = TryGetActiveConfigurationName(candidate);
-        var runtimeToken = BuildRuntimeToken(candidate, title, typeCode);
-        var identity = BuildDocumentIdentity(path, runtimeToken);
-
-        return new SwDocumentState(identity, title, path, typeCode, configuration);
-    }
-
-    private static string? TryGetActiveConfigurationName(object? document)
+    private SwDocumentState? TryCollectDocument(IModelDoc2? document)
     {
         if (document is null)
         {
             return null;
         }
 
-        dynamic dynamicDocument = document;
-        var configurationManager = SafeGet(() => dynamicDocument.ConfigurationManager);
+        var path = Normalize(SafeGetString("IModelDoc2.GetPathName", document.GetPathName));
+        var title = Normalize(SafeGetString("IModelDoc2.GetTitle", document.GetTitle));
+        var typeCode = MapDocumentType(
+            SafeGetInt("IModelDoc2.GetType", document.GetType));
+        var configuration = TryGetActiveConfigurationName(document);
+        var runtimeToken = BuildRuntimeToken(document, title, typeCode);
+        var identity = BuildDocumentIdentity(path, runtimeToken);
+
+        return new SwDocumentState(identity, title, path, typeCode, configuration);
+    }
+
+    private string? TryGetActiveConfigurationName(IModelDoc2? document)
+    {
+        if (document is null)
+        {
+            return null;
+        }
+
+        var configurationManager = SafeGet(
+            "IModelDoc2.ConfigurationManager",
+            () => document.ConfigurationManager as IConfigurationManager);
         var activeConfiguration = configurationManager is null
             ? null
-            : SafeGet(() => ((dynamic)configurationManager).ActiveConfiguration);
+            : SafeGet(
+                "IConfigurationManager.ActiveConfiguration",
+                () => configurationManager.ActiveConfiguration);
 
         return Normalize(
             activeConfiguration is null
                 ? null
-                : SafeGetString(() => ((dynamic)activeConfiguration).Name));
+                : SafeGetString(
+                    "IConfiguration.Name",
+                    () => activeConfiguration.Name));
     }
 
-    private static string BuildRuntimeToken(object document, string? title, string documentType)
+    private static string BuildRuntimeToken(IModelDoc2 document, string? title, string documentType)
     {
         try
         {
@@ -191,111 +229,103 @@ public sealed class SwStateCollector
         }
     }
 
-    private static string TryGetBestObjectName(object? selectedObject)
+    private string TryGetBestObjectName(object? selectedObject)
     {
         if (selectedObject is null)
         {
             return string.Empty;
         }
 
-        dynamic dynamicObject = selectedObject;
-
-        foreach (var getter in CandidateNameGetters(dynamicObject))
+        foreach (var candidate in GetCandidateObjectNames(selectedObject))
         {
-            var value = Normalize(getter());
-            if (!string.IsNullOrWhiteSpace(value))
+            if (!string.IsNullOrWhiteSpace(candidate))
             {
-                return value!;
+                return candidate!;
             }
         }
 
         return selectedObject.GetType().Name;
     }
 
-    private static IEnumerable<Func<string?>> CandidateNameGetters(dynamic dynamicObject)
+    private IEnumerable<string?> GetCandidateObjectNames(object selectedObject)
     {
-        yield return () => SafeGetString(() => dynamicObject.Name);
-        yield return () => SafeGetString(() => dynamicObject.Name2);
-        yield return () => SafeGetString(() => dynamicObject.GetName());
-        yield return () => SafeGetString(() => dynamicObject.GetName2());
-        yield return () => SafeGetString(() => dynamicObject.GetPathName());
-        yield return () => SafeGetString(() => dynamicObject.GetTitle());
+        yield return TryReadDynamicString(selectedObject, "Name");
+        yield return TryReadDynamicString(selectedObject, "Name2");
+        yield return TryInvokeDynamicString(selectedObject, "GetName");
+        yield return TryInvokeDynamicString(selectedObject, "GetName2");
+        yield return TryInvokeDynamicString(selectedObject, "GetPathName");
+        yield return TryInvokeDynamicString(selectedObject, "GetTitle");
     }
 
-    private static IEnumerable<object> EnumerateComArray(object? value)
+    private string? TryReadDynamicString(object instance, string propertyName)
     {
-        switch (value)
+        try
         {
-            case null:
-                yield break;
-            case Array array:
-                foreach (var item in array)
-                {
-                    if (item is not null)
-                    {
-                        yield return item;
-                    }
-                }
-
-                yield break;
-            case System.Collections.IEnumerable enumerable:
-                foreach (var item in enumerable)
-                {
-                    if (item is not null)
-                    {
-                        yield return item;
-                    }
-                }
-
-                yield break;
-            default:
-                yield return value;
-                break;
+            var property = instance.GetType().GetProperty(propertyName);
+            return Normalize(property?.GetValue(instance)?.ToString());
+        }
+        catch (TargetInvocationException ex) when (ex.InnerException is COMException comEx)
+        {
+            ReportComException($"{instance.GetType().Name}.{propertyName}", comEx);
+            return null;
+        }
+        catch (COMException ex)
+        {
+            ReportComException($"{instance.GetType().Name}.{propertyName}", ex);
+            return null;
         }
     }
 
-    private static object? SafeGet(Func<object?> getter)
+    private string? TryInvokeDynamicString(object instance, string methodName)
+    {
+        try
+        {
+            var method = instance.GetType().GetMethod(methodName, Type.EmptyTypes);
+            return Normalize(method?.Invoke(instance, null)?.ToString());
+        }
+        catch (TargetInvocationException ex) when (ex.InnerException is COMException comEx)
+        {
+            ReportComException($"{instance.GetType().Name}.{methodName}()", comEx);
+            return null;
+        }
+        catch (COMException ex)
+        {
+            ReportComException($"{instance.GetType().Name}.{methodName}()", ex);
+            return null;
+        }
+    }
+
+    private T? SafeGet<T>(string operation, Func<T> getter)
     {
         try
         {
             return getter();
         }
-        catch (COMException)
+        catch (COMException ex)
         {
-            return null;
+            ReportComException(operation, ex);
+            return default;
         }
-        catch (InvalidCastException)
+        catch (InvalidCastException ex)
         {
-            return null;
+            _diagnosticSink?.Invoke($"SW state cast failure in {operation}: {ex.Message}");
+            return default;
         }
     }
 
-    private static string? SafeGetString(Func<object?> getter) =>
-        SafeGet(getter)?.ToString();
+    private string? SafeGetString(string operation, Func<string> getter) =>
+        Normalize(SafeGet(operation, getter));
 
-    private static int SafeGetInt(Func<object?> getter)
-    {
-        var value = SafeGet(getter);
-        return value switch
-        {
-            int integer => integer,
-            short shortValue => shortValue,
-            long longValue => (int)longValue,
-            _ => 0
-        };
-    }
+    private int SafeGetInt(string operation, Func<int> getter) =>
+        SafeGet(operation, getter);
 
-    private static int? SafeGetNullableInt(Func<object?> getter)
+    private int? SafeGetNullableInt(string operation, Func<int> getter) =>
+        SafeGet(operation, getter);
+
+    private void ReportComException(string operation, COMException ex)
     {
-        var value = SafeGet(getter);
-        return value switch
-        {
-            null => null,
-            int integer => integer,
-            short shortValue => shortValue,
-            long longValue => (int)longValue,
-            _ => null
-        };
+        _diagnosticSink?.Invoke(
+            $"COM failure in {operation}: 0x{ex.HResult:x8} {ex.Message}");
     }
 
     private static string MapDocumentType(int documentType) =>
@@ -304,7 +334,7 @@ public sealed class SwStateCollector
             (int)swDocumentTypes_e.swDocPART => "prt",
             (int)swDocumentTypes_e.swDocASSEMBLY => "asm",
             (int)swDocumentTypes_e.swDocDRAWING => "drw",
-            _ => "unk"
+            _ => $"doc:{documentType}"
         };
 
     private static string MapSelectionType(int selectionType)
