@@ -711,10 +711,12 @@ public sealed class GetModelStateTool : ISwTool
         foreach (var m in mates)
         {
             var valStr = m.Value.HasValue
-                ? $"  {m.Value.Value:F2}{(m.IsAngle ? "°" : "mm")}"
+                ? $" {m.Value.Value:F2}{(m.IsAngle ? "°" : "mm")}"
                 : string.Empty;
+            var typeStr    = $"{m.TypeLabel}{valStr}";
+            var flipStr    = m.Flipped ? " [flipped]" : string.Empty;
             sb.AppendLine(
-                $"  {m.Name,-22}  {m.TypeLabel,-16}  {m.Entity1} ↔ {m.Entity2}{valStr}");
+                $"  {m.Name,-22}  {typeStr,-24}  {m.Alignment,-14}  {m.Entity1} ↔ {m.Entity2}{flipStr}");
         }
     }
 
@@ -793,13 +795,22 @@ public sealed class GetModelStateTool : ISwTool
                 }
             }
 
-            return new MateInfo(mateName, typeLabel, entity1, entity2, value, isAngle);
+            // Alignment: 0=Aligned, 1=Anti-Aligned, 2=Closest (swMateAlign_e)
+            var alignment = TryGetInt(() => mate.Alignment) switch
+            {
+                1 => "Anti-Aligned",
+                2 => "Closest",
+                _ => "Aligned"
+            };
+            bool flipped = TryGetBool(() => mate.Flipped);
+
+            return new MateInfo(mateName, typeLabel, entity1, entity2, value, isAngle, alignment, flipped);
         }
         catch { return null; }
     }
 
     /// <summary>
-    /// Resolves a mate entity reference to a readable "componentName::featureName" string.
+    /// Resolves a mate entity reference to "componentName::featureName [EntityType]".
     /// Falls back gracefully for reference planes, axes, and edges.
     /// </summary>
     private static string ResolveEntity(
@@ -818,9 +829,10 @@ public sealed class GetModelStateTool : ISwTool
                 var featureName = TryGet(() => (face.GetFeature() as IFeature)?.Name)
                                ?? string.Empty;
                 var bodyName    = GetComponentName(TryGet(() => face.IGetBody()), bodyMap);
-                return string.IsNullOrWhiteSpace(featureName)
+                var desc        = string.IsNullOrWhiteSpace(featureName)
                     ? bodyName
                     : $"{bodyName}::{featureName}";
+                return $"{desc} [Face]";
             }
 
             if (reference is IEdge edge)
@@ -829,9 +841,9 @@ public sealed class GetModelStateTool : ISwTool
                 if (adjacent?.Length > 0 && adjacent[0] is IFace2 adjFace)
                 {
                     var compName = GetComponentName(TryGet(() => adjFace.IGetBody()), bodyMap);
-                    return $"{compName}::edge";
+                    return $"{compName} [Edge]";
                 }
-                return "edge";
+                return "[Edge]";
             }
 
             // Reference planes and axes have no Name property in this interop version —
@@ -839,13 +851,13 @@ public sealed class GetModelStateTool : ISwTool
             if (reference is IRefPlane)
             {
                 var compName = TryGet(() => entity.ReferenceComponent?.Name) ?? string.Empty;
-                return string.IsNullOrWhiteSpace(compName) ? "plane" : $"{compName}::plane";
+                return string.IsNullOrWhiteSpace(compName) ? "[Plane]" : $"{compName} [Plane]";
             }
 
             if (reference is IRefAxis)
             {
                 var compName = TryGet(() => entity.ReferenceComponent?.Name) ?? string.Empty;
-                return string.IsNullOrWhiteSpace(compName) ? "axis" : $"{compName}::axis";
+                return string.IsNullOrWhiteSpace(compName) ? "[Axis]" : $"{compName} [Axis]";
             }
 
             return reference.GetType().Name;
@@ -998,10 +1010,12 @@ public sealed class GetModelStateTool : ISwTool
         double?  DraftAngle2Deg);
 
     private sealed record MateInfo(
-        string Name,
-        string TypeLabel,
-        string Entity1,
-        string Entity2,
+        string  Name,
+        string  TypeLabel,
+        string  Entity1,
+        string  Entity2,
         double? Value,
-        bool IsAngle);
+        bool    IsAngle,
+        string  Alignment,
+        bool    Flipped);
 }
