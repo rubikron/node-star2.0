@@ -826,13 +826,16 @@ public sealed class GetModelStateTool : ISwTool
 
             if (reference is IFace2 face)
             {
-                var featureName = TryGet(() => (face.GetFeature() as IFeature)?.Name)
-                               ?? string.Empty;
+                var feat        = TryGet(() => face.GetFeature() as IFeature);
+                var featureName = feat is not null ? TryGet(() => feat.Name) ?? string.Empty : string.Empty;
                 var bodyName    = GetComponentName(TryGet(() => face.IGetBody()), bodyMap);
                 var desc        = string.IsNullOrWhiteSpace(featureName)
                     ? bodyName
                     : $"{bodyName}::{featureName}";
-                return $"{desc} [Face]";
+                var surface     = TryGet(() => face.IGetSurface());
+                var surfLabel   = surface is not null ? GetSurfaceTypeLabel(surface) : "Face";
+                var faceDetail  = GetFaceIndexAndArea(face, feat);
+                return $"{desc} [{surfLabel}{faceDetail}]";
             }
 
             if (reference is IEdge edge)
@@ -851,13 +854,13 @@ public sealed class GetModelStateTool : ISwTool
             if (reference is IRefPlane)
             {
                 var compName = TryGet(() => entity.ReferenceComponent?.Name) ?? string.Empty;
-                return string.IsNullOrWhiteSpace(compName) ? "[Plane]" : $"{compName} [Plane]";
+                return string.IsNullOrWhiteSpace(compName) ? "[Datum Plane]" : $"{compName} [Datum Plane]";
             }
 
             if (reference is IRefAxis)
             {
                 var compName = TryGet(() => entity.ReferenceComponent?.Name) ?? string.Empty;
-                return string.IsNullOrWhiteSpace(compName) ? "[Axis]" : $"{compName} [Axis]";
+                return string.IsNullOrWhiteSpace(compName) ? "[Datum Axis]" : $"{compName} [Datum Axis]";
             }
 
             return reference.GetType().Name;
@@ -877,6 +880,60 @@ public sealed class GetModelStateTool : ISwTool
             return bodyMap.TryGetValue(ptr, out var name) ? name : "?";
         }
         catch { return "?"; }
+    }
+
+    // ── Surface type label ───────────────────────────────────────────────────
+
+    private static string GetSurfaceTypeLabel(ISurface surface)
+    {
+        try
+        {
+            if (surface.IsPlane())    return "Plane";
+            if (surface.IsCylinder()) return "Cylinder";
+            if (surface.IsCone())     return "Cone";
+            if (surface.IsSphere())   return "Sphere";
+            if (surface.IsTorus())    return "Torus";
+            if (surface.IsRevolved()) return "Revolved";
+            if (surface.IsSwept())    return "Swept";
+            return "Face";
+        }
+        catch { return "Face"; }
+    }
+
+    /// <summary>
+    /// Returns ", face[N]/Total, Area mm²" so a VBA script can locate the face via
+    /// feat.GetFaces()(N) and verify it by area.
+    /// </summary>
+    private static string GetFaceIndexAndArea(IFace2 face, IFeature? feat)
+    {
+        try
+        {
+            double areaMm2 = TryGetDouble(() => face.GetArea()) * 1e6; // m² → mm²
+            var areaStr = $"{areaMm2:F1}mm²";
+
+            if (feat is null) return $", {areaStr}";
+
+            int faceIndex  = -1;
+            int totalFaces = TryGetInt(() => feat.GetFaceCount());
+            var featFaces  = TryGet(() => feat.GetFaces() as object[]);
+
+            if (featFaces is not null)
+            {
+                for (int i = 0; i < featFaces.Length; i++)
+                {
+                    if (featFaces[i] is IFace2 f && TryGetBool(() => face.IsSame(f)))
+                    {
+                        faceIndex = i;
+                        break;
+                    }
+                }
+            }
+
+            return faceIndex >= 0
+                ? $", face[{faceIndex}]/{totalFaces}, {areaStr}"
+                : $", {areaStr}";
+        }
+        catch { return string.Empty; }
     }
 
     // ── Feature type labels ──────────────────────────────────────────────────
