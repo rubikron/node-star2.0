@@ -56,7 +56,7 @@ public sealed class SwStateDiffTests
 
     /// <summary>
     /// Verifies that switching the active document only changes the expected session fields.
-    /// Document collection patch is empty when only session-level fields (activeDoc, config) change.
+    /// No add/update/remove items when only session-level fields (activeDoc, selection) change.
     /// </summary>
     [Fact]
     public void BuildPatch_WhenActiveDocumentChanges_UpdatesSessionFieldsOnly()
@@ -86,45 +86,55 @@ public sealed class SwStateDiffTests
 
         Assert.Equal(current.ActiveDocument, patch.ActiveDocument);
         Assert.NotNull(patch.Selection);
-        Assert.Null(patch.OpenDocuments);           // no model content changed
+        Assert.Null(patch.Added);             // no model content changed
+        Assert.Null(patch.Updated);           // no model content changed
+        Assert.Null(patch.Removed);           // no model content changed
         Assert.Null(patch.ActiveConfigurationName); // config unchanged
     }
 
     /// <summary>
-    /// Verifies add, remove, and update behavior for the open-document diff.
-    /// Updates are detected by ModelSnapshot token change.
+    /// Verifies add, remove, and update behavior for the flat change lists.
+    /// New documents appear in Added[*].Document; closed docs in Removed[*].DocumentId;
+    /// changed sub-items (mates, features, components) appear in Updated[*].
     /// </summary>
     [Fact]
     public void DocumentCollectionPatch_WhenDocumentsChange_TracksAddedRemovedAndUpdated()
     {
-        var previous = new SwDocumentDetail[]
-        {
-            MakeDetail("a", "A", "prt", "Default", modelSnapshot: "snap-a-v1"),
-            MakeDetail("b", "B", "asm", "Default", modelSnapshot: "snap-b")
-        };
+        var mateV1 = new MateInfo("Coincident1", "coincident", "face1", "face2", null, false, "aligned", false);
+        var mateV2 = new MateInfo("Coincident1", "coincident", "face1", "face2", null, false, "anti-aligned", false); // alignment changed
 
-        var current = new SwDocumentDetail[]
-        {
-            MakeDetail("a", "A", "prt", "Default", modelSnapshot: "snap-a-v2"), // same id, new model
-            MakeDetail("c", "C", "drw", null,      modelSnapshot: "snap-c")     // new doc
-            // "b" removed
-        };
+        var docA_prev = MakeDetail("a", "A", "asm", "Default", modelSnapshot: "snap-a-v1", mates: [mateV1]);
+        var docA_curr = MakeDetail("a", "A", "asm", "Default", modelSnapshot: "snap-a-v2", mates: [mateV2]);
+        var docB      = MakeDetail("b", "B", "asm", "Default", modelSnapshot: "snap-b");
+        var docC      = MakeDetail("c", "C", "drw", null,      modelSnapshot: "snap-c");
 
-        var patch = SwDocumentCollectionPatch.Create(previous, current);
-        var added   = Assert.IsAssignableFrom<IReadOnlyList<SwDocumentDetail>>(patch.Added);
-        var updated = Assert.IsAssignableFrom<IReadOnlyList<SwDocumentPatch>>(patch.Updated);
-        var removed = Assert.IsAssignableFrom<IReadOnlyList<string>>(patch.Removed);
+        var previous = CreateState(openDocuments: [docA_prev, docB]);
+        var current  = CreateState(openDocuments: [docA_curr, docC]); // B removed, C added, A's mate updated
 
-        Assert.Single(added);
-        Assert.Equal("c", added[0].Id);
-        Assert.Single(updated);
-        Assert.Equal("a", updated[0].Id);
-        Assert.Single(removed);
-        Assert.Equal("b", removed[0]);
+        var patch = current.BuildPatch(previous);
+
+        // C was added as a new document
+        Assert.NotNull(patch.Added);
+        var addedDocs = patch.Added!.Where(i => i.Document is not null).ToList();
+        Assert.Single(addedDocs);
+        Assert.Equal("c", addedDocs[0].Document!.Id);
+
+        // B was removed
+        Assert.NotNull(patch.Removed);
+        var removedDocs = patch.Removed!.Where(i => i.DocumentId is not null).ToList();
+        Assert.Single(removedDocs);
+        Assert.Equal("b", removedDocs[0].DocumentId);
+
+        // The mate in doc A was updated (alignment changed)
+        Assert.NotNull(patch.Updated);
+        var updatedMates = patch.Updated!.Where(i => i.Mate is not null).ToList();
+        Assert.Single(updatedMates);
+        Assert.Equal("a", updatedMates[0].DocId);
+        Assert.Equal("Coincident1", updatedMates[0].Mate!.Name);
     }
 
     /// <summary>
-    /// Verifies that serialized patch payloads use the readable field names.
+    /// Verifies that serialized patch payloads use the readable field names at root level.
     /// </summary>
     [Fact]
     public void ToPatchResponseJson_UsesReadableFieldNames()
@@ -164,8 +174,56 @@ public sealed class SwStateDiffTests
         Assert.NotNull(patch.Selection);
         Assert.Single(patch.Selection!);
         Assert.Null(patch.ActiveDocument);
-        Assert.Null(patch.OpenDocuments);
+        Assert.Null(patch.Added);
+        Assert.Null(patch.Updated);
+        Assert.Null(patch.Removed);
         Assert.Null(patch.ActiveConfigurationName);
+    }
+
+    /// <summary>
+    /// Verifies that new mates added to a document appear in the flat Added list.
+    /// </summary>
+    [Fact]
+    public void BuildPatch_WhenMateAdded_AppearsInFlatAddedList()
+    {
+        var mate = new MateInfo("Coincident4", "coincident", "face1", "face2", null, false, "aligned", false);
+
+        var docPrev = MakeDetail("a", "A", "asm", "Default", modelSnapshot: "snap-v1");
+        var docCurr = MakeDetail("a", "A", "asm", "Default", modelSnapshot: "snap-v2", mates: [mate]);
+
+        var previous = CreateState(openDocuments: [docPrev]);
+        var current  = CreateState(openDocuments: [docCurr]);
+
+        var patch = current.BuildPatch(previous);
+
+        Assert.NotNull(patch.Added);
+        var addedMates = patch.Added!.Where(i => i.Mate is not null).ToList();
+        Assert.Single(addedMates);
+        Assert.Equal("a",            addedMates[0].DocId);
+        Assert.Equal("Coincident4",  addedMates[0].Mate!.Name);
+    }
+
+    /// <summary>
+    /// Verifies that removed mates appear in the flat Removed list with identity-only items.
+    /// </summary>
+    [Fact]
+    public void BuildPatch_WhenMateRemoved_AppearsInFlatRemovedList()
+    {
+        var mate = new MateInfo("Coincident2", "coincident", "face1", "face2", null, false, "aligned", false);
+
+        var docPrev = MakeDetail("a", "A", "asm", "Default", modelSnapshot: "snap-v1", mates: [mate]);
+        var docCurr = MakeDetail("a", "A", "asm", "Default", modelSnapshot: "snap-v2");
+
+        var previous = CreateState(openDocuments: [docPrev]);
+        var current  = CreateState(openDocuments: [docCurr]);
+
+        var patch = current.BuildPatch(previous);
+
+        Assert.NotNull(patch.Removed);
+        var removedMates = patch.Removed!.Where(i => i.MateName is not null).ToList();
+        Assert.Single(removedMates);
+        Assert.Equal("a",            removedMates[0].DocId);
+        Assert.Equal("Coincident2",  removedMates[0].MateName);
     }
 
     /// <summary>
@@ -207,24 +265,30 @@ public sealed class SwStateDiffTests
         string? title         = null,
         string  type          = "prt",
         string? config        = "Default",
-        string  modelSnapshot = "") =>
+        string  modelSnapshot = "",
+        IReadOnlyList<FeatureInfo>?   features   = null,
+        IReadOnlyList<ComponentInfo>? components = null,
+        IReadOnlyList<MateInfo>?      mates      = null) =>
         new SwDocumentDetail
         {
             Id                = id,
             Title             = title,
             DocumentType      = type,
             ConfigurationName = config,
-            ModelSnapshot     = modelSnapshot
+            ModelSnapshot     = modelSnapshot,
+            Features          = features,
+            Components        = components,
+            Mates             = mates
         };
 
     private static SwDocumentState ToRef(SwDocumentDetail d) =>
         new SwDocumentState(d.Id, d.Title, d.Path, d.DocumentType, d.ConfigurationName);
 
     private static SwState CreateState(
-        SwDocumentState?              activeDocument    = null,
-        IReadOnlyList<SwDocumentDetail>? openDocuments  = null,
-        IReadOnlyList<SwSelectionState>? selection      = null,
-        string?                       activeConfiguration = "Default")
+        SwDocumentState?                 activeDocument    = null,
+        IReadOnlyList<SwDocumentDetail>? openDocuments     = null,
+        IReadOnlyList<SwSelectionState>? selection         = null,
+        string?                          activeConfiguration = "Default")
     {
         var defaultDetail = MakeDetail(
             "doc", "Part1", "prt", activeConfiguration, modelSnapshot: "snap-default");
