@@ -1,48 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
+import { traceable } from 'langsmith/traceable';
 import { planExecutions } from '@/lib/planner';
 import { graph } from '@/lib/graph';
-import type { OpenAIChatRequest, OpenAIChatResponse } from '@/types/openai';
+import type { OpenAIChatRequest, OpenAIChatResponse, OpenAIChatMessage } from '@/types/openai';
 
-export async function POST(req: NextRequest) {
-  let body: OpenAIChatRequest;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json(
-      { error: { message: 'Invalid JSON body', type: 'invalid_request_error' } },
-      { status: 400 }
-    );
-  }
+interface PipelineResult {
+  content: string;
+  allSuccess: boolean;
+}
 
-  if (!Array.isArray(body.messages) || body.messages.length === 0) {
-    return NextResponse.json(
-      {
-        error: {
-          message: 'messages array is required and must not be empty',
-          type: 'invalid_request_error',
-        },
-      },
-      { status: 400 }
-    );
-  }
-
-  try {
+const runVBAPipeline = traceable(
+  async (messages: OpenAIChatMessage[]): Promise<PipelineResult> => {
     // Step 1: Haiku planner — parse intent and plan execution sequence
-    const plan = await planExecutions(body.messages);
-
-    if (plan.executions.length === 0) {
-      return NextResponse.json(
-        {
-          error: {
-            message:
-              'Could not identify any part IDs or actions from the request. Please include a part ID and describe the operation.',
-            type: 'invalid_request_error',
-          },
-        },
-        { status: 400 }
-      );
-    }
+    const plan = await planExecutions(messages);
 
     // Step 2: Execute VBA generation sequentially in planned order
     const sorted = [...plan.executions].sort(
@@ -107,6 +78,37 @@ export async function POST(req: NextRequest) {
                 : `' === [Step ${r.execution.sequence_number}] ERROR: ${r.execution.part_id} — ${r.error} ===`
             )
             .join('\n\n');
+
+    return { content, allSuccess };
+  },
+  { name: 'vba-pipeline' }
+);
+
+export async function POST(req: NextRequest) {
+  let body: OpenAIChatRequest;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json(
+      { error: { message: 'Invalid JSON body', type: 'invalid_request_error' } },
+      { status: 400 }
+    );
+  }
+
+  if (!body.messages || body.messages.length === 0) {
+    return NextResponse.json(
+      {
+        error: {
+          message: 'messages is required and must be a non-empty array',
+          type: 'invalid_request_error',
+        },
+      },
+      { status: 400 }
+    );
+  }
+
+  try {
+    const { content, allSuccess } = await runVBAPipeline(body.messages);
 
     const response: OpenAIChatResponse = {
       id: `chatcmpl-${randomUUID()}`,
