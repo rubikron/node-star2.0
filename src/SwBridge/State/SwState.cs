@@ -56,6 +56,12 @@ public sealed record SwState
     public string? ActiveConfigurationName { get; init; }
 
     /// <summary>
+    /// Gets the active document's model state (feature tree, mates, geometry) when available.
+    /// </summary>
+    [JsonPropertyName("state")]
+    public ModelState? ModelState { get; init; }
+
+    /// <summary>
     /// Creates a normalized snapshot with a deterministic token.
     /// </summary>
     /// <param name="revisionNumber">Connected SOLIDWORKS revision number.</param>
@@ -69,7 +75,8 @@ public sealed record SwState
         SwDocumentState? activeDocument,
         IEnumerable<SwDocumentState>? openDocuments,
         IEnumerable<SwSelectionState>? selection,
-        string? activeConfigurationName)
+        string? activeConfigurationName,
+        ModelState? modelState = null)
     {
         var normalized = new SwState
         {
@@ -81,7 +88,8 @@ public sealed record SwState
             Selection = (selection ?? [])
                 .OrderBy(static item => item.Key, StringComparer.Ordinal)
                 .ToArray(),
-            ActiveConfigurationName = Normalize(activeConfigurationName)
+            ActiveConfigurationName = Normalize(activeConfigurationName),
+            ModelState = modelState
         };
 
         return normalized with
@@ -151,6 +159,11 @@ public sealed record SwState
             patch.OpenDocuments = documentPatch;
         }
 
+        if (previous.ModelState?.SnapshotToken != ModelState?.SnapshotToken)
+        {
+            patch.ModelState = ModelState;
+        }
+
         return patch;
     }
 
@@ -204,7 +217,8 @@ public sealed record SwState
                 ActiveDocument = state.ActiveDocument,
                 OpenDocuments = state.OpenDocuments,
                 Selection = state.Selection,
-                ActiveConfigurationName = state.ActiveConfigurationName
+                ActiveConfigurationName = state.ActiveConfigurationName,
+                ModelStateToken = state.ModelState?.SnapshotToken
             },
             JsonOptions);
 
@@ -231,6 +245,9 @@ public sealed record SwState
 
         [JsonPropertyName("activeConfig")]
         public string? ActiveConfigurationName { get; init; }
+
+        [JsonPropertyName("stateToken")]
+        public string? ModelStateToken { get; init; }
     }
 }
 
@@ -336,6 +353,12 @@ public sealed record SwStatePatch
     public string? ActiveConfigurationName { get; set; }
 
     /// <summary>
+    /// Gets the updated model state when the document structure changed.
+    /// </summary>
+    [JsonPropertyName("state")]
+    public ModelState? ModelState { get; set; }
+
+    /// <summary>
     /// Gets whether the patch carries any actual field changes.
     /// </summary>
     [JsonIgnore]
@@ -344,7 +367,8 @@ public sealed record SwStatePatch
         ActiveDocument is null &&
         OpenDocuments is null &&
         Selection is null &&
-        ActiveConfigurationName is null;
+        ActiveConfigurationName is null &&
+        ModelState is null;
 }
 
 /// <summary>

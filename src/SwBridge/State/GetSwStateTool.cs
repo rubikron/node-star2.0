@@ -1,5 +1,6 @@
 using SwBridge.Connection;
 using SwBridge.Models;
+using SwBridge.Tools.Model;
 
 namespace SwBridge.Tools.Session;
 
@@ -11,6 +12,7 @@ public sealed class GetSwStateTool : ISwTool
 {
     private readonly ISwConnector _connector;
     private readonly SwStateCollector _collector;
+    private readonly ModelStateCollector _modelCollector;
     private readonly object _sync = new();
     private SwState? _lastSnapshot;
 
@@ -23,6 +25,7 @@ public sealed class GetSwStateTool : ISwTool
     {
         _connector = connector;
         _collector = collector ?? new SwStateCollector();
+        _modelCollector = new ModelStateCollector();
     }
 
     /// <inheritdoc/>
@@ -64,7 +67,11 @@ public sealed class GetSwStateTool : ISwTool
             () =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var current = _collector.Collect(_connector);
+                var session = _collector.Collect(_connector);
+                var modelState = _connector.Application is not null
+                    ? _modelCollector.Collect(_connector.Application)
+                    : null;
+                var current = session with { ModelState = modelState };
 
                 lock (_sync)
                 {

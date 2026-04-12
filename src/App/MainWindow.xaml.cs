@@ -9,6 +9,7 @@ using System.Windows.Shell;
 using LlmOrchestrator;
 using SwBridge.Connection;
 using SwBridge.Tools.Model;
+using SwBridge.Tools.Session;
 
 namespace Nodestar.App;
 
@@ -29,6 +30,10 @@ public partial class MainWindow : Window
 
     // Lazy so it picks up the connector after it's fully initialized.
     private GetModelStateTool ModelStateTool => new(_connector);
+
+    // Persistent so _lastSnapshot is preserved across /snapshot patch calls.
+    private GetSwStateTool? _swStateTool;
+    private GetSwStateTool SwStateTool => _swStateTool ??= new(_connector);
 
     /// <summary>
     /// Initializes the window and seeds the preview conversation.
@@ -590,6 +595,40 @@ public partial class MainWindow : Window
             catch (Exception ex)
             {
                 AddAssistantMessage("system", $"get_model_state failed: {ex.Message}");
+            }
+            finally
+            {
+                UpdateSendButtonState();
+                ConversationScrollViewer.ScrollToEnd();
+            }
+            return;
+        }
+        // ── Dev command: /snapshot full | /snapshot patch ────────────────────
+        if (prompt.StartsWith("/snapshot", StringComparison.OrdinalIgnoreCase))
+        {
+            var parts = prompt.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            var mode  = parts.Length >= 2 ? parts[1].ToLowerInvariant() : "full";
+
+            if (mode is not ("full" or "patch"))
+            {
+                AddAssistantMessage("system", "Usage: /snapshot full  or  /snapshot patch");
+                return;
+            }
+
+            PromptTextBox.Clear();
+            SendButton.IsEnabled = false;
+            AddAssistantMessage("system", $"Capturing snapshot ({mode})...");
+            ConversationScrollViewer.ScrollToEnd();
+
+            try
+            {
+                var result = await SwStateTool.ExecuteAsync(
+                    new Dictionary<string, string> { ["mode"] = mode });
+                AddAssistantMessage("nodestar", result);
+            }
+            catch (Exception ex)
+            {
+                AddAssistantMessage("system", $"get_sw_state failed: {ex.Message}");
             }
             finally
             {
