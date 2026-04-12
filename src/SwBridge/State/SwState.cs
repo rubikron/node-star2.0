@@ -346,7 +346,7 @@ public sealed record SwDocumentCollectionPatch
     public IReadOnlyList<SwDocumentDetail>? Added { get; init; }
 
     [JsonPropertyName("updated")]
-    public IReadOnlyList<SwDocumentDetail>? Updated { get; init; }
+    public IReadOnlyList<SwDocumentPatch>? Updated { get; init; }
 
     [JsonPropertyName("removed")]
     public IReadOnlyList<string>? Removed { get; init; }
@@ -373,8 +373,10 @@ public sealed record SwDocumentCollectionPatch
             .ToArray();
 
         var updated = current
-            .Where(doc => previousMap.TryGetValue(doc.Id, out var earlier) &&
-                          !string.Equals(earlier.ModelSnapshot, doc.ModelSnapshot, StringComparison.Ordinal))
+            .Select(doc => previousMap.TryGetValue(doc.Id, out var earlier)
+                ? SwDocumentPatch.Compute(earlier, doc)
+                : null)
+            .OfType<SwDocumentPatch>()
             .ToArray();
 
         var removed = previous
@@ -390,4 +392,97 @@ public sealed record SwDocumentCollectionPatch
             Removed = removed.Length == 0 ? null : removed
         };
     }
+}
+
+// ── Document-level patch records ──────────────────────────────────────────────
+
+/// <summary>
+/// Fine-grained patch for a single document whose model content changed.
+/// Only fields that actually changed are present; absent fields are unchanged.
+/// </summary>
+public sealed record SwDocumentPatch
+{
+    private static readonly JsonSerializerOptions CompactOptions = new()
+    {
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        WriteIndented          = false
+    };
+
+    [JsonPropertyName("id")]       public string Id       { get; init; } = string.Empty;
+    [JsonPropertyName("snapshot")] public string Snapshot { get; init; } = string.Empty;
+
+    // Scalar fields — null means "unchanged"
+    [JsonPropertyName("boundsMm")]  public double[]? BoundsMm  { get; init; }
+    [JsonPropertyName("massG")]     public double?   MassGrams { get; init; }
+    [JsonPropertyName("volumeMm3")] public double?   VolumeMm3 { get; init; }
+    [JsonPropertyName("unsaved")]   public bool?     Unsaved   { get; init; }
+
+    // Collection diffs — null means "no changes in this collection"
+    [JsonPropertyName("features")]   public SwListDiff<FeatureInfo>?   Features   { get; init; }
+    [JsonPropertyName("components")] public SwListDiff<ComponentInfo>? Components { get; init; }
+    [JsonPropertyName("mates")]      public SwListDiff<MateInfo>?      Mates      { get; init; }
+
+    /// <summary>
+    /// Computes a fine-grained patch between two versions of the same document.
+    /// Returns <see langword="null"/> if the model snapshot token is unchanged.
+    /// </summary>
+    public static SwDocumentPatch? Compute(SwDocumentDetail previous, SwDocumentDetail current)
+    {
+        if (string.Equals(previous.ModelSnapshot, current.ModelSnapshot, StringComparison.Ordinal))
+            return null;
+
+        return new SwDocumentPatch
+        {
+            Id         = current.Id,
+            Snapshot   = current.ModelSnapshot,
+            BoundsMm   = JsonEquals(previous.BoundsMm,  current.BoundsMm)  ? null : current.BoundsMm,
+            MassGrams  = previous.MassGrams == current.MassGrams            ? null : current.MassGrams,
+            VolumeMm3  = previous.VolumeMm3 == current.VolumeMm3            ? null : current.VolumeMm3,
+            Unsaved    = previous.Unsaved   == current.Unsaved              ? null : current.Unsaved,
+            Features   = DiffList(previous.Features,   current.Features,   static f => f.Name),
+            Components = DiffList(previous.Components, current.Components, static c => c.Name),
+            Mates      = DiffList(previous.Mates,      current.Mates,      static m => m.Name),
+        };
+    }
+
+    private static SwListDiff<T>? DiffList<T>(
+        IReadOnlyList<T>? previous,
+        IReadOnlyList<T>? current,
+        Func<T, string>   keyOf)
+    {
+        var prev = previous ?? [];
+        var curr = current  ?? [];
+
+        var prevMap = prev.ToDictionary(keyOf, StringComparer.Ordinal);
+        var currMap = curr.ToDictionary(keyOf, StringComparer.Ordinal);
+
+        var added   = curr.Where(x => !prevMap.ContainsKey(keyOf(x))).ToArray();
+        var removed = prev.Select(keyOf).Where(k => !currMap.ContainsKey(k)).ToArray();
+        var updated = curr.Where(x =>
+            prevMap.TryGetValue(keyOf(x), out var p) && !JsonEquals(x, p)).ToArray();
+
+        if (added.Length == 0 && updated.Length == 0 && removed.Length == 0)
+            return null;
+
+        return new SwListDiff<T>
+        {
+            Added   = added.Length   == 0 ? null : added,
+            Updated = updated.Length == 0 ? null : updated,
+            Removed = removed.Length == 0 ? null : removed
+        };
+    }
+
+    private static bool JsonEquals<T>(T? a, T? b) =>
+        JsonSerializer.Serialize(a, CompactOptions) ==
+        JsonSerializer.Serialize(b, CompactOptions);
+}
+
+/// <summary>Generic add/update/remove diff for a named collection within a document.</summary>
+public sealed record SwListDiff<T>
+{
+    [JsonPropertyName("added")]   public IReadOnlyList<T>?      Added   { get; init; }
+    [JsonPropertyName("updated")] public IReadOnlyList<T>?      Updated { get; init; }
+    [JsonPropertyName("removed")] public IReadOnlyList<string>? Removed { get; init; }
+
+    [JsonIgnore] public bool IsEmpty => Added is null && Updated is null && Removed is null;
 }

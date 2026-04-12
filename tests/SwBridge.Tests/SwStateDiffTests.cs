@@ -112,7 +112,7 @@ public sealed class SwStateDiffTests
 
         var patch = SwDocumentCollectionPatch.Create(previous, current);
         var added   = Assert.IsAssignableFrom<IReadOnlyList<SwDocumentDetail>>(patch.Added);
-        var updated = Assert.IsAssignableFrom<IReadOnlyList<SwDocumentDetail>>(patch.Updated);
+        var updated = Assert.IsAssignableFrom<IReadOnlyList<SwDocumentPatch>>(patch.Updated);
         var removed = Assert.IsAssignableFrom<IReadOnlyList<string>>(patch.Removed);
 
         Assert.Single(added);
