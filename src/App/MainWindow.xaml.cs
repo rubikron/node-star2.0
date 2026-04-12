@@ -624,10 +624,13 @@ public partial class MainWindow : Window
             {
                 var result = await SwStateTool.ExecuteAsync(
                     new Dictionary<string, string> { ["mode"] = mode });
-                AddAssistantMessage("nodestar", result);
+
+                System.Diagnostics.Debug.WriteLine($"[/snapshot {mode}]\n{result}");
+                AddAssistantMessage("system", $"Snapshot ({mode}) written to debug output.");
             }
             catch (Exception ex)
             {
+                System.Diagnostics.Debug.WriteLine($"[/snapshot {mode}] ERROR: {ex}");
                 AddAssistantMessage("system", $"get_sw_state failed: {ex.Message}");
             }
             finally
