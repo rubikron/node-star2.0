@@ -10,7 +10,8 @@ namespace SwBridge.Tests;
 public sealed class SwStateDiffTests
 {
     /// <summary>
-    /// Verifies that unchanged snapshots generate an explicit empty patch envelope.
+    /// Verifies that unchanged snapshots generate an explicit empty patch envelope
+    /// (state key absent, IsEmpty true).
     /// </summary>
     [Fact]
     public void BuildPatch_WhenStateIsUnchanged_ReturnsExplicitEmptyPatchEnvelope()
@@ -55,11 +56,11 @@ public sealed class SwStateDiffTests
     }
 
     /// <summary>
-    /// Verifies that switching the active document only changes the expected session fields.
-    /// No add/update/remove items when only session-level fields (activeDoc, selection) change.
+    /// Verifies that switching the active document produces a state.updated entry
+    /// containing the new activeDoc value, not a root-level field.
     /// </summary>
     [Fact]
-    public void BuildPatch_WhenActiveDocumentChanges_UpdatesSessionFieldsOnly()
+    public void BuildPatch_WhenActiveDocumentChanges_ActiveDocAppearsInStateUpdated()
     {
         var docA = MakeDetail("c:\\parts\\a.sldprt", "A", "prt", "Default", modelSnapshot: "tok-a");
         var docB = MakeDetail("c:\\parts\\b.sldprt", "B", "prt", "Default", modelSnapshot: "tok-b");
@@ -84,18 +85,29 @@ public sealed class SwStateDiffTests
 
         var patch = current.BuildPatch(previous);
 
-        Assert.Equal(current.ActiveDocument, patch.ActiveDocument);
-        Assert.NotNull(patch.Selection);
-        Assert.Null(patch.Added);             // no model content changed
-        Assert.Null(patch.Updated);           // no model content changed
-        Assert.Null(patch.Removed);           // no model content changed
-        Assert.Null(patch.ActiveConfigurationName); // config unchanged
+        Assert.NotNull(patch.State);
+        var updatedItems = patch.State!.Updated;
+        Assert.NotNull(updatedItems);
+
+        // activeDoc change appears as an updated item
+        var activeDocUpdate = updatedItems!.SingleOrDefault(i => i.ActiveDocument is not null);
+        Assert.NotNull(activeDocUpdate);
+        Assert.Equal(current.ActiveDocument, activeDocUpdate!.ActiveDocument);
+
+        // selection change also appears as an updated item
+        Assert.Contains(updatedItems!, i => i.Selection is not null);
+
+        // No document model changes
+        Assert.Null(patch.State.Added);
+        Assert.Null(patch.State.Removed);
+        // No activeConfig change
+        Assert.DoesNotContain(updatedItems!, i => i.ActiveConfigurationName is not null);
     }
 
     /// <summary>
-    /// Verifies add, remove, and update behavior for the flat change lists.
-    /// New documents appear in Added[*].Document; closed docs in Removed[*].DocumentId;
-    /// changed sub-items (mates, features, components) appear in Updated[*].
+    /// Verifies add, remove, and update behavior for the flat state change lists.
+    /// New documents appear in state.added[*].document; closed docs in state.removed[*].documentId;
+    /// changed sub-items (mates) appear in state.updated[*].
     /// </summary>
     [Fact]
     public void DocumentCollectionPatch_WhenDocumentsChange_TracksAddedRemovedAndUpdated()
@@ -113,31 +125,34 @@ public sealed class SwStateDiffTests
 
         var patch = current.BuildPatch(previous);
 
+        Assert.NotNull(patch.State);
+
         // C was added as a new document
-        Assert.NotNull(patch.Added);
-        var addedDocs = patch.Added!.Where(i => i.Document is not null).ToList();
+        Assert.NotNull(patch.State!.Added);
+        var addedDocs = patch.State.Added!.Where(i => i.Document is not null).ToList();
         Assert.Single(addedDocs);
         Assert.Equal("c", addedDocs[0].Document!.Id);
 
         // B was removed
-        Assert.NotNull(patch.Removed);
-        var removedDocs = patch.Removed!.Where(i => i.DocumentId is not null).ToList();
+        Assert.NotNull(patch.State.Removed);
+        var removedDocs = patch.State.Removed!.Where(i => i.DocumentId is not null).ToList();
         Assert.Single(removedDocs);
         Assert.Equal("b", removedDocs[0].DocumentId);
 
         // The mate in doc A was updated (alignment changed)
-        Assert.NotNull(patch.Updated);
-        var updatedMates = patch.Updated!.Where(i => i.Mate is not null).ToList();
+        Assert.NotNull(patch.State.Updated);
+        var updatedMates = patch.State.Updated!.Where(i => i.Mate is not null).ToList();
         Assert.Single(updatedMates);
-        Assert.Equal("a", updatedMates[0].DocId);
-        Assert.Equal("Coincident1", updatedMates[0].Mate!.Name);
+        Assert.Equal("a",            updatedMates[0].DocId);
+        Assert.Equal("Coincident1",  updatedMates[0].Mate!.Name);
     }
 
     /// <summary>
-    /// Verifies that serialized patch payloads use the readable field names at root level.
+    /// Verifies that serialized patch payloads use the correct structure:
+    /// mode/prevSnap/snapshot at root; changes nested under "state".
     /// </summary>
     [Fact]
-    public void ToPatchResponseJson_UsesReadableFieldNames()
+    public void ToPatchResponseJson_UsesCorrectStructure()
     {
         var previous = CreateState(activeConfiguration: "Default");
         var current  = CreateState(activeConfiguration: "Alt");
@@ -145,17 +160,27 @@ public sealed class SwStateDiffTests
         using var document = JsonDocument.Parse(current.ToPatchResponseJson(previous));
         var root = document.RootElement;
 
+        // Root-level envelope fields
         Assert.Equal("patch", root.GetProperty("mode").GetString());
         Assert.True(root.TryGetProperty("prevSnap", out _));
         Assert.True(root.TryGetProperty("snapshot", out _));
-        Assert.True(root.TryGetProperty("activeConfig", out _));
+
+        // Changes are under "state", not at root
+        Assert.True(root.TryGetProperty("state", out var stateEl));
+        Assert.False(root.TryGetProperty("activeConfig", out _));
+
+        // activeConfig change appears inside state.updated
+        Assert.True(stateEl.TryGetProperty("updated", out var updatedEl));
+        var configUpdate = updatedEl.EnumerateArray()
+            .FirstOrDefault(el => el.TryGetProperty("activeConfig", out _));
+        Assert.NotEqual(default, configUpdate);
     }
 
     /// <summary>
-    /// Verifies that selection changes replace only the selection payload.
+    /// Verifies that selection changes appear as an updated item inside state.
     /// </summary>
     [Fact]
-    public void BuildPatch_WhenSelectionChanges_OnlySelectionPayloadChanges()
+    public void BuildPatch_WhenSelectionChanges_SelectionAppearsInStateUpdated()
     {
         var previous = CreateState(
             selection:
@@ -171,20 +196,26 @@ public sealed class SwStateDiffTests
 
         var patch = current.BuildPatch(previous);
 
-        Assert.NotNull(patch.Selection);
-        Assert.Single(patch.Selection!);
-        Assert.Null(patch.ActiveDocument);
-        Assert.Null(patch.Added);
-        Assert.Null(patch.Updated);
-        Assert.Null(patch.Removed);
-        Assert.Null(patch.ActiveConfigurationName);
+        Assert.NotNull(patch.State);
+        var updatedItems = patch.State!.Updated;
+        Assert.NotNull(updatedItems);
+
+        var selectionUpdate = updatedItems!.SingleOrDefault(i => i.Selection is not null);
+        Assert.NotNull(selectionUpdate);
+        Assert.Single(selectionUpdate!.Selection!);
+
+        // Nothing else changed
+        Assert.Null(patch.State.Added);
+        Assert.Null(patch.State.Removed);
+        Assert.DoesNotContain(updatedItems!, i => i.ActiveDocument is not null);
+        Assert.DoesNotContain(updatedItems!, i => i.ActiveConfigurationName is not null);
     }
 
     /// <summary>
-    /// Verifies that new mates added to a document appear in the flat Added list.
+    /// Verifies that new mates added to a document appear in state.added.
     /// </summary>
     [Fact]
-    public void BuildPatch_WhenMateAdded_AppearsInFlatAddedList()
+    public void BuildPatch_WhenMateAdded_AppearsInStateAdded()
     {
         var mate = new MateInfo("Coincident4", "coincident", "face1", "face2", null, false, "aligned", false);
 
@@ -196,18 +227,19 @@ public sealed class SwStateDiffTests
 
         var patch = current.BuildPatch(previous);
 
-        Assert.NotNull(patch.Added);
-        var addedMates = patch.Added!.Where(i => i.Mate is not null).ToList();
+        Assert.NotNull(patch.State);
+        Assert.NotNull(patch.State!.Added);
+        var addedMates = patch.State.Added!.Where(i => i.Mate is not null).ToList();
         Assert.Single(addedMates);
-        Assert.Equal("a",            addedMates[0].DocId);
-        Assert.Equal("Coincident4",  addedMates[0].Mate!.Name);
+        Assert.Equal("a",           addedMates[0].DocId);
+        Assert.Equal("Coincident4", addedMates[0].Mate!.Name);
     }
 
     /// <summary>
-    /// Verifies that removed mates appear in the flat Removed list with identity-only items.
+    /// Verifies that removed mates appear in state.removed with identity-only items.
     /// </summary>
     [Fact]
-    public void BuildPatch_WhenMateRemoved_AppearsInFlatRemovedList()
+    public void BuildPatch_WhenMateRemoved_AppearsInStateRemoved()
     {
         var mate = new MateInfo("Coincident2", "coincident", "face1", "face2", null, false, "aligned", false);
 
@@ -219,8 +251,9 @@ public sealed class SwStateDiffTests
 
         var patch = current.BuildPatch(previous);
 
-        Assert.NotNull(patch.Removed);
-        var removedMates = patch.Removed!.Where(i => i.MateName is not null).ToList();
+        Assert.NotNull(patch.State);
+        Assert.NotNull(patch.State!.Removed);
+        var removedMates = patch.State.Removed!.Where(i => i.MateName is not null).ToList();
         Assert.Single(removedMates);
         Assert.Equal("a",            removedMates[0].DocId);
         Assert.Equal("Coincident2",  removedMates[0].MateName);
@@ -285,9 +318,9 @@ public sealed class SwStateDiffTests
         new SwDocumentState(d.Id, d.Title, d.Path, d.DocumentType, d.ConfigurationName);
 
     private static SwState CreateState(
-        SwDocumentState?                 activeDocument    = null,
-        IReadOnlyList<SwDocumentDetail>? openDocuments     = null,
-        IReadOnlyList<SwSelectionState>? selection         = null,
+        SwDocumentState?                 activeDocument      = null,
+        IReadOnlyList<SwDocumentDetail>? openDocuments       = null,
+        IReadOnlyList<SwSelectionState>? selection           = null,
         string?                          activeConfiguration = "Default")
     {
         var defaultDetail = MakeDetail(

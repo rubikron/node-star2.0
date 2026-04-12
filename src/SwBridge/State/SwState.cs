@@ -75,7 +75,8 @@ public sealed record SwState
             JsonOptions);
 
     /// <summary>
-    /// Patch response: mode/prevSnap/snapshot plus flat added/updated/removed lists at root.
+    /// Patch response: mode/prevSnap/snapshot at root; all changes nested under "state".
+    /// Session-level changes (activeDoc, selection, activeConfig) appear as items in state.updated.
     /// Only fields that actually changed are present.
     /// </summary>
     public SwStatePatch BuildPatch(SwState? previous)
@@ -83,25 +84,17 @@ public sealed record SwState
         var previousSnapshotToken = previous?.SnapshotToken;
         previous ??= Create(null, null, null, null, null);
 
-        var patch = new SwStatePatch
-        {
-            PreviousSnapshotToken = previousSnapshotToken,
-            SnapshotToken         = SnapshotToken
-        };
-
-        if (!string.Equals(previous.RevisionNumber, RevisionNumber, StringComparison.Ordinal))
-            patch.RevisionNumber = RevisionNumber;
-        if (previous.ActiveDocument != ActiveDocument)
-            patch.ActiveDocument = ActiveDocument;
-        if (!string.Equals(previous.ActiveConfigurationName, ActiveConfigurationName, StringComparison.Ordinal))
-            patch.ActiveConfigurationName = ActiveConfigurationName;
-        if (!previous.Selection.SequenceEqual(Selection))
-            patch.Selection = Selection;
-
-        // Flat change lists — everything at root level
         var added   = new List<SwChangeItem>();
         var updated = new List<SwChangeItem>();
         var removed = new List<SwChangeItem>();
+
+        // Session-level changes → updated items
+        if (previous.ActiveDocument != ActiveDocument)
+            updated.Add(new SwChangeItem { ActiveDocument = ActiveDocument });
+        if (!string.Equals(previous.ActiveConfigurationName, ActiveConfigurationName, StringComparison.Ordinal))
+            updated.Add(new SwChangeItem { ActiveConfigurationName = ActiveConfigurationName });
+        if (!previous.Selection.SequenceEqual(Selection))
+            updated.Add(new SwChangeItem { Selection = Selection });
 
         var prevMap = previous.OpenDocuments.ToDictionary(d => d.Id, StringComparer.Ordinal);
         var currMap = OpenDocuments.ToDictionary(d => d.Id, StringComparer.Ordinal);
@@ -143,11 +136,23 @@ public sealed record SwState
                 added, updated, removed);
         }
 
-        if (added.Count   > 0) patch.Added   = added;
-        if (updated.Count > 0) patch.Updated = updated;
-        if (removed.Count > 0) patch.Removed = removed;
+        SwPatchState? state = null;
+        if (added.Count > 0 || updated.Count > 0 || removed.Count > 0)
+        {
+            state = new SwPatchState
+            {
+                Added   = added.Count   > 0 ? added   : null,
+                Updated = updated.Count > 0 ? updated : null,
+                Removed = removed.Count > 0 ? removed : null
+            };
+        }
 
-        return patch;
+        return new SwStatePatch
+        {
+            PreviousSnapshotToken = previousSnapshotToken,
+            SnapshotToken         = SnapshotToken,
+            State                 = state
+        };
     }
 
     public string ToPatchResponseJson(SwState? previous) =>
@@ -290,44 +295,41 @@ public sealed record SwSessionContext
     [JsonPropertyName("documents")]    public IReadOnlyList<SwDocumentDetail>  Documents              { get; init; } = [];
 }
 
-// ── Patch record ──────────────────────────────────────────────────────────────
+// ── Patch records ─────────────────────────────────────────────────────────────
 
 /// <summary>
-/// Patch response. All changes are flat at root level alongside mode/prevSnap/snapshot.
-/// Only fields that actually changed are present.
+/// Patch response envelope. Only mode/prevSnap/snapshot are at root;
+/// all actual changes are nested under "state".
 /// </summary>
 public sealed record SwStatePatch
 {
-    [JsonPropertyName("mode")]         public string  Mode                  { get; init; } = "patch";
-    [JsonPropertyName("prevSnap")]     public string? PreviousSnapshotToken { get; set; }
-    [JsonPropertyName("snapshot")]     public string  SnapshotToken         { get; set; } = string.Empty;
-    [JsonPropertyName("SwVersion")]    public string? RevisionNumber        { get; set; }
-    [JsonPropertyName("activeDoc")]    public SwDocumentState? ActiveDocument { get; set; }
-    [JsonPropertyName("activeConfig")] public string? ActiveConfigurationName { get; set; }
-    [JsonPropertyName("selection")]    public IReadOnlyList<SwSelectionState>? Selection { get; set; }
-
-    /// <summary>Newly added items: documents, mates, features, or components.</summary>
-    [JsonPropertyName("added")]   public IReadOnlyList<SwChangeItem>? Added   { get; set; }
-    /// <summary>Items whose content changed.</summary>
-    [JsonPropertyName("updated")] public IReadOnlyList<SwChangeItem>? Updated { get; set; }
-    /// <summary>Removed items (identity only).</summary>
-    [JsonPropertyName("removed")] public IReadOnlyList<SwChangeItem>? Removed { get; set; }
+    [JsonPropertyName("mode")]     public string       Mode                  { get; init; } = "patch";
+    [JsonPropertyName("prevSnap")] public string?      PreviousSnapshotToken { get; init; }
+    [JsonPropertyName("snapshot")] public string       SnapshotToken         { get; init; } = string.Empty;
+    [JsonPropertyName("state")]    public SwPatchState? State                { get; init; }
 
     [JsonIgnore]
-    public bool IsEmpty =>
-        RevisionNumber is null &&
-        ActiveDocument is null &&
-        Selection is null &&
-        ActiveConfigurationName is null &&
-        Added is null &&
-        Updated is null &&
-        Removed is null;
+    public bool IsEmpty => State is null;
+}
+
+/// <summary>
+/// The changes payload nested under "state" in a patch response.
+/// </summary>
+public sealed record SwPatchState
+{
+    /// <summary>Newly added items: documents, mates, features, or components.</summary>
+    [JsonPropertyName("added")]   public IReadOnlyList<SwChangeItem>? Added   { get; init; }
+    /// <summary>Items whose content changed, including session-level fields (activeDoc, selection, activeConfig).</summary>
+    [JsonPropertyName("updated")] public IReadOnlyList<SwChangeItem>? Updated { get; init; }
+    /// <summary>Removed items (identity only).</summary>
+    [JsonPropertyName("removed")] public IReadOnlyList<SwChangeItem>? Removed { get; init; }
 }
 
 /// <summary>
 /// A single change entry in a patch's added/updated/removed list.
-/// Exactly one payload field is populated; all others are null and omitted from JSON.
+/// Exactly one payload field is populated per entry; all others are null and omitted from JSON.
 ///
+/// Session updated:   one of <see cref="ActiveDocument"/>, <see cref="ActiveConfigurationName"/>, <see cref="Selection"/>.
 /// Document added:    <see cref="Document"/> is set.
 /// Document removed:  <see cref="DocumentId"/> is set.
 /// Sub-doc added/updated: <see cref="DocId"/> + one of <see cref="Mate"/>, <see cref="Feature"/>, <see cref="Component"/>.
@@ -336,6 +338,11 @@ public sealed record SwStatePatch
 /// </summary>
 public sealed record SwChangeItem
 {
+    // Session-level (appear in state.updated)
+    [JsonPropertyName("activeDoc")]    public SwDocumentState?                 ActiveDocument          { get; init; }
+    [JsonPropertyName("activeConfig")] public string?                          ActiveConfigurationName { get; init; }
+    [JsonPropertyName("selection")]    public IReadOnlyList<SwSelectionState>?  Selection              { get; init; }
+
     // Document-level
     [JsonPropertyName("document")]   public SwDocumentDetail? Document   { get; init; }
     [JsonPropertyName("documentId")] public string?           DocumentId { get; init; }
