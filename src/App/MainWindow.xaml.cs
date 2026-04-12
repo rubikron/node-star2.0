@@ -8,6 +8,7 @@ using System.Windows.Media.Effects;
 using System.Windows.Shell;
 using LlmOrchestrator;
 using SwBridge.Connection;
+using SwBridge.Tools.Model;
 
 namespace Nodestar.App;
 
@@ -25,6 +26,9 @@ public partial class MainWindow : Window
     private readonly List<ChatMessage> _conversationHistory = [];
     private bool _isStatusMenuOpen;
     private bool _isSynchronizingSolidWorksWindow;
+
+    // Lazy so it picks up the connector after it's fully initialized.
+    private GetModelStateTool ModelStateTool => new(_connector);
 
     /// <summary>
     /// Initializes the window and seeds the preview conversation.
@@ -568,6 +572,33 @@ public partial class MainWindow : Window
         {
             return;
         }
+
+        // ── Dev command: /state ───────────────────────────────────────────────
+        if (prompt.Equals("/state", StringComparison.OrdinalIgnoreCase))
+        {
+            PromptTextBox.Clear();
+            SendButton.IsEnabled = false;
+            AddAssistantMessage("system", "Capturing model state...");
+            ConversationScrollViewer.ScrollToEnd();
+
+            try
+            {
+                var result = await ModelStateTool.ExecuteAsync(
+                    new Dictionary<string, string>());
+                AddAssistantMessage("nodestar", result);
+            }
+            catch (Exception ex)
+            {
+                AddAssistantMessage("system", $"get_model_state failed: {ex.Message}");
+            }
+            finally
+            {
+                UpdateSendButtonState();
+                ConversationScrollViewer.ScrollToEnd();
+            }
+            return;
+        }
+        // ─────────────────────────────────────────────────────────────────────
 
         AddUserMessage("you", prompt);
         _conversationHistory.Add(new ChatMessage("user", prompt));
