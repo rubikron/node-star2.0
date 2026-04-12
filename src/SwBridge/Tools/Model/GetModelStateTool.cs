@@ -8,7 +8,9 @@ namespace SwBridge.Tools.Model;
 
 /// <summary>
 /// Returns a human-readable snapshot of the active SOLIDWORKS document for LLM context.
-/// For parts: document info, bounding box, mass, and the full feature tree with dimension values.
+/// For parts: document info, bounding box, mass, and the full feature tree with dimension values,
+/// sketch geometry details (plane, normal, origin, constraints, segment counts), and extrude
+/// parameters (end condition, depth, direction, draft angle).
 /// For assemblies: document info, bounding box, mass, component tree, and mates with resolved entity names.
 /// </summary>
 public sealed class GetModelStateTool : ISwTool
@@ -29,7 +31,8 @@ public sealed class GetModelStateTool : ISwTool
     /// <inheritdoc/>
     public string Description =>
         "Returns a structured summary of the active SOLIDWORKS document. " +
-        "For parts: feature tree with dimension values, bounding box, and mass properties. " +
+        "For parts: feature tree with dimension values, sketch geometry (plane, normal, origin, constraints), " +
+        "extrude parameters (depth, direction, end condition), bounding box, and mass properties. " +
         "For assemblies: component tree, mates with resolved face/entity names, bounding box, and mass. " +
         "No parameters required. " +
         "Call this before writing any revision or inspection macro so you have accurate feature names, " +
@@ -211,6 +214,40 @@ public sealed class GetModelStateTool : ISwTool
                 : string.Empty;
 
             sb.AppendLine($"  [{i + 1,2}]  {f.Name,-28}  {f.TypeLabel,-20}{dimTag}{suppTag}");
+
+            // Sketch sub-detail: reference plane, normal, origin, constraints, segment counts.
+            if (f.Sketch is { } sk)
+            {
+                var normalStr = sk.Normal is { } n
+                    ? $"({n[0]:F2}, {n[1]:F2}, {n[2]:F2})"
+                    : "?";
+                var originStr = sk.Origin is { } o
+                    ? $"({o[0]:F1}, {o[1]:F1}, {o[2]:F1}) mm"
+                    : "?";
+
+                sb.AppendLine($"         Plane: {sk.PlaneName,-16}  Normal: {normalStr,-22}  Origin: {originStr,-24}  {sk.ConstrainedStatus}");
+
+                var segs = new List<string>(4);
+                if (sk.Lines    > 0) segs.Add($"{sk.Lines} line{(sk.Lines    != 1 ? "s" : "")}");
+                if (sk.Arcs     > 0) segs.Add($"{sk.Arcs} arc{(sk.Arcs      != 1 ? "s" : "")}");
+                if (sk.Splines  > 0) segs.Add($"{sk.Splines} spline{(sk.Splines  != 1 ? "s" : "")}");
+                if (sk.Ellipses > 0) segs.Add($"{sk.Ellipses} ellipse{(sk.Ellipses != 1 ? "s" : "")}");
+                sb.AppendLine($"         Segments: {(segs.Count > 0 ? string.Join(", ", segs) : "none")}");
+            }
+
+            // Extrude sub-detail: boss/cut, end condition, depth, direction, draft.
+            if (f.Extrude is { } ex)
+            {
+                var dirStr    = ex.Reversed ? "Reversed" : "Forward";
+                var draftStr  = ex.DraftAngle1Deg > 0.001 ? $"  Draft: {ex.DraftAngle1Deg:F2}°" : "";
+                sb.AppendLine($"         {ex.BossOrCut,-6}  D1: {ex.EndCondition1} {ex.Depth1Mm:F2} mm{draftStr}  Dir: {dirStr}");
+
+                if (ex.BothDirections && ex.EndCondition2 is not null)
+                {
+                    var draftStr2 = (ex.DraftAngle2Deg ?? 0) > 0.001 ? $"  Draft: {ex.DraftAngle2Deg:F2}°" : "";
+                    sb.AppendLine($"         D2: {ex.EndCondition2} {ex.Depth2Mm:F2} mm{draftStr2}");
+                }
+            }
         }
     }
 
@@ -223,6 +260,9 @@ public sealed class GetModelStateTool : ISwTool
             "Attribute", "SensorFolder", "MarkupFolder", "FavoriteFolder",
             "BlockDef", "OriginProfileFeature", "3DAnnotationFolder", "MateGroup"
         };
+
+        // Build plane map first so sketch features can resolve their reference plane names.
+        var planeMap = BuildPlaneMap(doc);
 
         var result = new List<FeatureInfo>();
         var feat   = TryGet(() => doc.FirstFeature() as IFeature);
@@ -241,7 +281,11 @@ public sealed class GetModelStateTool : ISwTool
                 var typeLabel  = MapFeatureType(typeName);
                 var dims       = CollectDimensions(feat);
 
-                result.Add(new FeatureInfo(name, typeLabel, suppressed, dims));
+                // Collect sub-detail for sketch and extrude features.
+                var sketchDetail  = IsSketchType(typeName)  ? TryCollectSketchDetail(feat, planeMap)  : null;
+                var extrudeDetail = IsExtrudeType(typeName) ? TryCollectExtrudeDetail(feat, doc)      : null;
+
+                result.Add(new FeatureInfo(name, typeLabel, suppressed, dims, sketchDetail, extrudeDetail));
             }
 
             feat = TryGet(() => feat.GetNextFeature() as IFeature);
@@ -249,6 +293,16 @@ public sealed class GetModelStateTool : ISwTool
 
         return result;
     }
+
+    private static bool IsSketchType(string typeName) =>
+        typeName.Equals("ProfileFeature", StringComparison.OrdinalIgnoreCase) ||
+        typeName.Equals("3DSketch",       StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsExtrudeType(string typeName) =>
+        typeName.Equals("Extrusion",  StringComparison.OrdinalIgnoreCase) ||
+        typeName.Equals("Cut",        StringComparison.OrdinalIgnoreCase) ||
+        typeName.Equals("ICEExtrude", StringComparison.OrdinalIgnoreCase) ||
+        typeName.Equals("ICECut",     StringComparison.OrdinalIgnoreCase);
 
     private static List<DimInfo> CollectDimensions(IFeature feat)
     {
@@ -283,6 +337,181 @@ public sealed class GetModelStateTool : ISwTool
 
         return dims;
     }
+
+    // ── Sketch sub-detail ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Builds a COM-pointer → plane-name map by scanning all RefPlane features.
+    /// Used to resolve which plane a sketch is on from ISketch.GetReferenceEntity.
+    /// </summary>
+    private static Dictionary<IntPtr, string> BuildPlaneMap(IModelDoc2 doc)
+    {
+        var map  = new Dictionary<IntPtr, string>();
+        var feat = TryGet(() => doc.FirstFeature() as IFeature);
+
+        while (feat is not null)
+        {
+            if (string.Equals(TryGet(() => feat.GetTypeName2()), "RefPlane", StringComparison.OrdinalIgnoreCase))
+            {
+                var plane = TryGet(() => feat.GetSpecificFeature2() as IRefPlane);
+                if (plane is not null)
+                {
+                    try
+                    {
+                        IntPtr ptr = Marshal.GetIUnknownForObject(plane);
+                        Marshal.Release(ptr);
+                        map.TryAdd(ptr, TryGet(() => feat.Name) ?? "plane");
+                    }
+                    catch { /* skip if COM identity unavailable */ }
+                }
+            }
+
+            feat = TryGet(() => feat.GetNextFeature() as IFeature);
+        }
+
+        return map;
+    }
+
+    /// <summary>
+    /// Collects sketch geometry detail: reference plane, world-space normal and origin,
+    /// constrained status, and segment counts (lines, arcs, splines, ellipses).
+    /// </summary>
+    private static SketchInfo? TryCollectSketchDetail(
+        IFeature feat,
+        Dictionary<IntPtr, string> planeMap)
+    {
+        try
+        {
+            var sketch = TryGet(() => feat.GetSpecificFeature2() as ISketch);
+            if (sketch is null) return null;
+
+            // ── Reference plane name and world-space normal ──────────────────
+            var planeName = "?";
+            double[]? normal = null;
+
+            int entityType = 0;
+            object? refEntity = null;
+            try { refEntity = sketch.GetReferenceEntity(ref entityType); } catch { }
+
+            if (refEntity is IRefPlane refPlane)
+            {
+                try
+                {
+                    IntPtr ptr = Marshal.GetIUnknownForObject(refPlane);
+                    Marshal.Release(ptr);
+                    planeName = planeMap.TryGetValue(ptr, out var pn) ? pn : "plane";
+                }
+                catch { planeName = "plane"; }
+
+                // Plane equation [a,b,c,d] — (a,b,c) is the unit normal in model space.
+                if (TryGet(() => refPlane.GetRefPlaneParams() as double[]) is { Length: >= 3 } p)
+                    normal = [p[0], p[1], p[2]];
+            }
+
+            // ── Sketch origin in world space ─────────────────────────────────
+            // ModelToSketchTransform maps model → sketch.
+            // Inverse maps sketch → model. Translation component (indices 12,13,14 in the
+            // 16-element column-major 4×4 matrix) gives the sketch origin in metres.
+            double[]? origin = null;
+            var modelToSketch = TryGet(() => sketch.ModelToSketchTransform as IMathTransform);
+            var sketchToModel = TryGet(() => modelToSketch?.Inverse() as IMathTransform);
+            if (TryGet(() => sketchToModel?.ArrayData as double[]) is { Length: >= 15 } xf)
+                origin = [xf[12] * 1000, xf[13] * 1000, xf[14] * 1000];
+
+            // ── Constrained status ───────────────────────────────────────────
+            int constraintRaw = TryGetInt(() => sketch.GetConstrainedStatus());
+            var constrainedStatus = constraintRaw switch
+            {
+                0 => "Under-Defined",
+                1 => "Fully-Defined",
+                2 => "Over-Defined",
+                _ => $"status:{constraintRaw}"
+            };
+
+            // ── Segment counts ───────────────────────────────────────────────
+            int lines    = TryGetInt(() => sketch.GetLineCount());
+            int arcs     = TryGetInt(() => sketch.GetArcCount());
+            int ellipses = TryGetInt(() => sketch.GetEllipseCount());
+            int splines  = 0;
+            try
+            {
+                int splinePoints = 0;
+                splines = sketch.GetSplineCount(ref splinePoints);
+            }
+            catch { }
+
+            return new SketchInfo(planeName, normal, origin, constrainedStatus, lines, arcs, ellipses, splines);
+        }
+        catch { return null; }
+    }
+
+    // ── Extrude sub-detail ───────────────────────────────────────────────────
+
+    /// <summary>
+    /// Collects extrude parameters: boss vs cut, end condition, depth, direction,
+    /// draft angle, and both-direction D2 values when applicable.
+    /// </summary>
+    private static ExtrudeInfo? TryCollectExtrudeDetail(IFeature feat, IModelDoc2 doc)
+    {
+        try
+        {
+            var extrudeData = TryGet(() => feat.GetDefinition() as IExtrudeFeatureData2);
+            if (extrudeData is null) return null;
+
+            // AccessSelections activates the feature data so property methods return valid values.
+            // ReleaseSelectionAccess must always be called after.
+            bool accessed = false;
+            try
+            {
+                accessed = TryGetBool(() => extrudeData.AccessSelections(doc, null));
+                if (!accessed) return null;
+
+                bool isBoss          = TryGetBool(() => extrudeData.IsBossFeature());
+                bool bothDirections  = TryGetBool(() => extrudeData.BothDirections);
+                bool reversed        = TryGetBool(() => extrudeData.ReverseDirection);
+
+                int    ec1     = TryGetInt    (() => extrudeData.GetEndCondition(true));
+                double depth1  = TryGetDouble (() => extrudeData.GetDepth(true))     * 1000; // m → mm
+                double draft1  = TryGetDouble (() => extrudeData.GetDraftAngle(true)) * (180.0 / Math.PI);
+
+                int?    ec2    = null;
+                double? depth2 = null;
+                double? draft2 = null;
+                if (bothDirections)
+                {
+                    ec2    = TryGetInt    (() => extrudeData.GetEndCondition(false));
+                    depth2 = TryGetDouble (() => extrudeData.GetDepth(false))     * 1000;
+                    draft2 = TryGetDouble (() => extrudeData.GetDraftAngle(false)) * (180.0 / Math.PI);
+                }
+
+                return new ExtrudeInfo(
+                    isBoss ? "Boss" : "Cut",
+                    MapEndCondition(ec1), depth1, draft1,
+                    bothDirections, reversed,
+                    ec2.HasValue ? MapEndCondition(ec2.Value) : null, depth2, draft2);
+            }
+            finally
+            {
+                if (accessed)
+                    try { extrudeData.ReleaseSelectionAccess(); } catch { }
+            }
+        }
+        catch { return null; }
+    }
+
+    private static string MapEndCondition(int ec) => ec switch
+    {
+        0 => "Blind",
+        1 => "Through-All",
+        2 => "Through-All-Both",
+        3 => "Through-Next",
+        4 => "Up-To-Vertex",
+        5 => "Up-To-Surface",
+        6 => "Offset-From-Surface",
+        7 => "Up-To-Body",
+        8 => "Mid-Plane",
+        _ => $"EndCond:{ec}"
+    };
 
     // ── Assembly: component tree ─────────────────────────────────────────────
 
@@ -604,9 +833,32 @@ public sealed class GetModelStateTool : ISwTool
         string Name,
         string TypeLabel,
         bool Suppressed,
-        List<DimInfo> Dimensions);
+        List<DimInfo> Dimensions,
+        SketchInfo? Sketch   = null,
+        ExtrudeInfo? Extrude = null);
 
     private sealed record DimInfo(string Name, string Value);
+
+    private sealed record SketchInfo(
+        string    PlaneName,
+        double[]? Normal,
+        double[]? Origin,
+        string    ConstrainedStatus,
+        int       Lines,
+        int       Arcs,
+        int       Ellipses,
+        int       Splines);
+
+    private sealed record ExtrudeInfo(
+        string   BossOrCut,
+        string   EndCondition1,
+        double   Depth1Mm,
+        double   DraftAngle1Deg,
+        bool     BothDirections,
+        bool     Reversed,
+        string?  EndCondition2,
+        double?  Depth2Mm,
+        double?  DraftAngle2Deg);
 
     private sealed record MateInfo(
         string Name,
