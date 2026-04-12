@@ -3,7 +3,7 @@ import { buildUserPrompt, VBA_SYSTEM_PROMPT } from "./prompts";
 
 describe("VBA_SYSTEM_PROMPT", () => {
   it("contains key instruction elements", () => {
-    expect(VBA_SYSTEM_PROMPT).toContain("SolidWorks VBA macro expert");
+    expect(VBA_SYSTEM_PROMPT).toContain("autonomous design agent");
     expect(VBA_SYSTEM_PROMPT).toContain("Sub");
     expect(VBA_SYSTEM_PROMPT).toContain("End Sub");
     expect(VBA_SYSTEM_PROMPT).toContain("swApp");
@@ -12,8 +12,7 @@ describe("VBA_SYSTEM_PROMPT", () => {
 
 describe("buildUserPrompt", () => {
   const base = {
-    part_type: "sheet_metal",
-    part_description: "A steel bracket",
+    part_id: "SW-001",
     action: "add a 3mm fillet to all edges",
     pinecone_vba: null,
     search_results: null,
@@ -21,10 +20,9 @@ describe("buildUserPrompt", () => {
     verify_error: null,
   };
 
-  it("includes part_type, part_description, and action", () => {
+  it("includes part_id and action", () => {
     const prompt = buildUserPrompt(base);
-    expect(prompt).toContain("sheet_metal");
-    expect(prompt).toContain("A steel bracket");
+    expect(prompt).toContain("SW-001");
     expect(prompt).toContain("add a 3mm fillet to all edges");
   });
 
@@ -65,15 +63,9 @@ describe("buildUserPrompt", () => {
     expect(prompt).not.toContain("previous attempt");
   });
 
-  it("handles null part_description gracefully", () => {
-    const prompt = buildUserPrompt({ ...base, part_description: null });
-    expect(prompt).toContain("N/A");
-  });
-
   it("includes all sections when fully populated", () => {
     const prompt = buildUserPrompt({
-      part_type: "extrusion",
-      part_description: "Aluminum channel",
+      part_id: "SW-002",
       action: "add boss-extrude",
       pinecone_vba: "Sub Ref()\nEnd Sub",
       search_results: "Boss Extrude API...",

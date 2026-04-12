@@ -36,12 +36,11 @@ function getEmbeddings(): OpenAIEmbeddings {
 }
 
 /**
- * Embed the action string and query Pinecone for similar VBA snippets
- * filtered by part_type. Returns the top match's score and vba_code.
+ * Embed the action string and query Pinecone for similar VBA snippets.
+ * Returns the top match's score and vba_code.
  */
 export async function queryVBASnippets(
-  action: string,
-  partType: string
+  action: string
 ): Promise<PineconeQueryResult> {
   const embeddings = getEmbeddings();
   const index = getPineconeIndex();
@@ -53,7 +52,6 @@ export async function queryVBASnippets(
     vector,
     topK: 3,
     includeMetadata: true,
-    filter: { part_type: { $eq: partType } },
   });
 
   const matches = result.matches ?? [];

@@ -6,10 +6,6 @@ export const VBAState = Annotation.Root({
   action: Annotation<string>(),
   debug: Annotation<boolean>(),
 
-  // Populated by check_part
-  part_type: Annotation<string | null>(),
-  part_description: Annotation<string | null>(),
-
   // Populated by query_pinecone
   pinecone_vba: Annotation<string | null>(),
   pinecone_score: Annotation<number | null>(),
@@ -22,10 +18,6 @@ export const VBAState = Annotation.Root({
   retry_count: Annotation<number>(),
   verify_error: Annotation<string | null>(),
   final_vba: Annotation<string | null>(),
-
-  // Error handling
-  error_status: Annotation<number | null>(),
-  error_message: Annotation<string | null>(),
 
   // Debug trace — each node appends its output
   debug_trace: Annotation<Record<string, unknown>>({

@@ -5,7 +5,6 @@ export interface GenerateRequest {
 }
 
 export interface PineconeVBAMetadata {
-  part_type: string;
   action: string;
   vba_code: string;
   description: string;

@@ -86,8 +86,7 @@ swEndCondBlind = 0, swEndCondThroughAll = 1, swEndCondMidPlane = 6
 swMateCOINCIDENT = 0, swMateCONCENTRIC = 1, swMateDISTANCE = 5`;
 
 interface BuildUserPromptArgs {
-  part_type: string;
-  part_description: string | null;
+  part_id: string;
   action: string;
   pinecone_vba: string | null;
   search_results: string | null;
@@ -101,8 +100,7 @@ interface BuildUserPromptArgs {
  */
 export function buildUserPrompt(args: BuildUserPromptArgs): string {
   const {
-    part_type,
-    part_description,
+    part_id,
     action,
     pinecone_vba,
     search_results,
@@ -113,8 +111,7 @@ export function buildUserPrompt(args: BuildUserPromptArgs): string {
   const lines: string[] = [
     "Generate a SolidWorks VBA macro for the following:",
     "",
-    `Part type: ${part_type}`,
-    `Part description: ${part_description ?? "N/A"}`,
+    `Part ID: ${part_id}`,
     `Action: ${action}`,
   ];
 

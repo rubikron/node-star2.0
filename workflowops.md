@@ -81,11 +81,9 @@ Defined in `lib/graph/state.ts` as `VBAState`. All nodes read from and write par
 
 | Field | Set by | Purpose |
 |---|---|---|
-| `part_id` | route input | SQL lookup key |
+| `part_id` | route input | Part identifier passed to LLM as context |
 | `action` | route input | Natural-language operation |
 | `debug` | route input | Enable debug trace response |
-| `part_type` | `check_part` | Filters Pinecone by part category |
-| `part_description` | `check_part` | Optional context for LLM |
 | `pinecone_vba` | `query_pinecone` | Cache-hit VBA snippet (if score ≥ 0.82) |
 | `pinecone_score` | `query_pinecone` | Similarity score from vector search |
 | `search_results` | `web_search` | Tavily search content injected into LLM prompt |
@@ -93,8 +91,6 @@ Defined in `lib/graph/state.ts` as `VBAState`. All nodes read from and write par
 | `retry_count` | `verify_vba` | Incremented on each failed verification |
 | `verify_error` | `verify_vba` | Error message fed back to LLM on retry |
 | `final_vba` | `verify_vba` | Verified, clean VBA — only set on success |
-| `error_status` | `check_part` | HTTP status code on hard error |
-| `error_message` | `check_part` | Error detail on hard error |
 | `debug_trace` | all nodes | Merged map of per-node debug info |
 
 ---
@@ -104,10 +100,6 @@ Defined in `lib/graph/state.ts` as `VBAState`. All nodes read from and write par
 ```
 START
   │
-  ▼
-check_part ──(error_status set)──────────────────► END (error)
-  │
-  │ (no error)
   ▼
 query_pinecone
   │
@@ -139,25 +131,12 @@ query_pinecone
 
 ## Node Details
 
-### Node 1 — `check_part`
-**File:** `lib/graph/nodes.ts` → `checkPartNode`
-**Type:** SQL lookup, no LLM
-
-- Queries Neon Postgres `parts` table for `part_id`
-- On success: sets `part_type` and `part_description`
-- On not found or DB error: defaults `part_type` to `"general"`, continues flow (DB is optional)
-- Only sets `error_status` for hard validation errors (currently unused — DB failures are soft)
-
-**Logs:** `[check_part] Found: <part_type>` or `[check_part] DB unavailable, skipping: <error>`
-
----
-
-### Node 2 — `query_pinecone`
+### Node 1 — `query_pinecone`
 **File:** `lib/graph/nodes.ts` → `queryPineconeNode`
 **Type:** Vector search, no LLM
 
 - Embeds `action` using OpenAI `text-embedding-3-small` (1024 dimensions)
-- Queries Pinecone namespace `solidworks-vba`, filtered by `part_type`
+- Queries Pinecone namespace `solidworks-vba` (no part_type filter)
 - `topK: 3`, uses top match score
 - Score ≥ 0.82 → cache hit, sets `pinecone_vba`, skips `web_search`
 - Score < 0.82 → cache miss, routes to `web_search`
@@ -166,7 +145,7 @@ query_pinecone
 
 ---
 
-### Node 3 — `web_search`
+### Node 2 — `web_search`
 **File:** `lib/graph/nodes.ts` → `webSearchNode`
 **Type:** Web retrieval, no LLM
 
@@ -179,12 +158,12 @@ query_pinecone
 
 ---
 
-### Node 4 — `generate_vba`
+### Node 3 — `generate_vba`
 **File:** `lib/graph/nodes.ts` → `generateVBANode`
 **LLM:** Claude `claude-sonnet-4-6` via `@langchain/anthropic`
 
 - Builds prompt via `buildUserPrompt()` (`lib/vba/prompts.ts`) injecting:
-  - `part_type`, `part_description`, `action`
+  - `part_id`, `action`
   - `pinecone_vba` (if cache hit)
   - `search_results` (if web search ran)
   - `verify_error` + retry context (on retry)
@@ -195,7 +174,7 @@ query_pinecone
 
 ---
 
-### Node 5 — `verify_vba`
+### Node 4 — `verify_vba`
 **File:** `lib/graph/nodes.ts` → `verifyVBANode`
 **Type:** Pure TypeScript structural check, no LLM
 
@@ -230,11 +209,10 @@ query_pinecone
 | `types/openai.ts` | OpenAI Chat Completions request/response types |
 | `app/api/vba/generate/route.ts` | Direct HTTP handler, input validation, response formatting |
 | `lib/graph/state.ts` | LangGraph state schema (`VBAState`) |
-| `lib/graph/nodes.ts` | All 5 node implementations |
+| `lib/graph/nodes.ts` | All 4 node implementations |
 | `lib/graph/edges.ts` | Conditional routing functions |
 | `lib/graph/index.ts` | Graph assembly and compile |
 | `lib/vba/prompts.ts` | System prompt + user prompt builder |
 | `lib/vba/verify.ts` | Pure TS VBA format checker |
 | `lib/pinecone/client.ts` | Pinecone singleton + `queryVBASnippets()` |
-| `lib/db/client.ts` | Neon Postgres singleton + `getPartByPartId()` |
 | `scripts/seed-pinecone.mjs` | One-time script to seed Pinecone with VBA snippets |

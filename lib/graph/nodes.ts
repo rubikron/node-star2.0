@@ -1,7 +1,6 @@
 import { ChatAnthropic } from "@langchain/anthropic";
 import { SystemMessage, HumanMessage } from "@langchain/core/messages";
 import { TavilySearchAPIRetriever } from "@langchain/community/retrievers/tavily_search_api";
-import { getPartByPartId } from "@/lib/db/client";
 import { queryVBASnippets } from "@/lib/pinecone/client";
 import { verifyVBAFormat } from "@/lib/vba/verify";
 import { VBA_SYSTEM_PROMPT, buildUserPrompt } from "@/lib/vba/prompts";
@@ -10,64 +9,11 @@ import { VBAState } from "./state";
 type State = typeof VBAState.State;
 
 // ---------------------------------------------------------------------------
-// Node 1: check_part
-// Pure SQL — no LLM. Short-circuits on missing part.
-// ---------------------------------------------------------------------------
-export async function checkPartNode(state: State): Promise<Partial<State>> {
-  try {
-    const part = await getPartByPartId(state.part_id);
-
-    if (!part) {
-      console.log(`[check_part] Not found: ${state.part_id} — skipping DB, continuing with defaults`);
-      return {
-        part_type: "general",
-        part_description: null,
-        debug_trace: {
-          check_part: { found: false, db_skipped: false, part_type: "general", part_description: null },
-        },
-      };
-    }
-
-    console.log(`[check_part] Found: ${part.part_type}`);
-    return {
-      part_type: part.part_type,
-      part_description: part.description,
-      debug_trace: {
-        check_part: {
-          found: true,
-          db_skipped: false,
-          part_type: part.part_type,
-          part_description: part.description,
-        },
-      },
-    };
-  } catch (err) {
-    console.warn(`[check_part] DB unavailable, skipping: ${(err as Error).message}`);
-    return {
-      part_type: "general",
-      part_description: null,
-      debug_trace: {
-        check_part: {
-          found: false,
-          db_skipped: true,
-          db_error: (err as Error).message,
-          part_type: "general",
-          part_description: null,
-        },
-      },
-    };
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Node 2: query_pinecone
+// Node 1: query_pinecone
 // Embedding + vector retrieval — no LLM.
 // ---------------------------------------------------------------------------
 export async function queryPineconeNode(state: State): Promise<Partial<State>> {
-  const { score, vbaCode } = await queryVBASnippets(
-    state.action,
-    state.part_type!
-  );
+  const { score, vbaCode } = await queryVBASnippets(state.action);
 
   const hit = score >= 0.82;
   const vbaPreview = vbaCode ? vbaCode.slice(0, 100) : null;
@@ -83,11 +29,11 @@ export async function queryPineconeNode(state: State): Promise<Partial<State>> {
 }
 
 // ---------------------------------------------------------------------------
-// Node 3: web_search
+// Node 2: web_search
 // Tavily retrieval — no LLM.
 // ---------------------------------------------------------------------------
 export async function webSearchNode(state: State): Promise<Partial<State>> {
-  const query = `SolidWorks VBA macro ${state.action} ${state.part_type} site:help.solidworks.com OR site:forum.solidworks.com OR site:stackoverflow.com`;
+  const query = `SolidWorks VBA macro ${state.action} site:help.solidworks.com OR site:forum.solidworks.com OR site:stackoverflow.com`;
 
   const retriever = new TavilySearchAPIRetriever({
     k: 3,
@@ -111,7 +57,7 @@ export async function webSearchNode(state: State): Promise<Partial<State>> {
 }
 
 // ---------------------------------------------------------------------------
-// Node 4: generate_vba
+// Node 3: generate_vba
 // Claude Sonnet — called after Pinecone hit, after web_search, or on retry.
 // ---------------------------------------------------------------------------
 export async function generateVBANode(state: State): Promise<Partial<State>> {
@@ -124,8 +70,7 @@ export async function generateVBANode(state: State): Promise<Partial<State>> {
   });
 
   const userPrompt = buildUserPrompt({
-    part_type: state.part_type!,
-    part_description: state.part_description,
+    part_id: state.part_id,
     action: state.action,
     pinecone_vba: state.pinecone_vba,
     search_results: state.search_results,
@@ -158,7 +103,7 @@ export async function generateVBANode(state: State): Promise<Partial<State>> {
 }
 
 // ---------------------------------------------------------------------------
-// Node 5: verify_vba
+// Node 4: verify_vba
 // Pure TS structural check — no LLM.
 // ---------------------------------------------------------------------------
 export async function verifyVBANode(state: State): Promise<Partial<State>> {

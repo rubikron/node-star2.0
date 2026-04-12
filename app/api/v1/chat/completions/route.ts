@@ -66,26 +66,15 @@ export async function POST(req: NextRequest) {
           action: execution.action,
           debug: false,
           retry_count: 0,
-          part_type: null,
-          part_description: null,
           pinecone_vba: null,
           pinecone_score: null,
           search_results: null,
           raw_vba: null,
           verify_error: null,
           final_vba: null,
-          error_status: null,
-          error_message: null,
         });
 
-        if (state.error_status) {
-          results.push({
-            execution,
-            vba: null,
-            error: state.error_message ?? 'VBA generation failed',
-            status: state.error_status,
-          });
-        } else if (!state.final_vba) {
+        if (!state.final_vba) {
           results.push({
             execution,
             vba: null,

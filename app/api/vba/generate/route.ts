@@ -29,24 +29,13 @@ export async function POST(req: Request) {
       action,
       debug,
       retry_count: 0,
-      part_type: null,
-      part_description: null,
       pinecone_vba: null,
       pinecone_score: null,
       search_results: null,
       raw_vba: null,
       verify_error: null,
       final_vba: null,
-      error_status: null,
-      error_message: null,
     });
-
-    if (result.error_status) {
-      return Response.json(
-        { error: result.error_message },
-        { status: result.error_status }
-      );
-    }
 
     if (!result.final_vba) {
       return Response.json(

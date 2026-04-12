@@ -4,13 +4,6 @@ import { VBAState } from "./state";
 type State = typeof VBAState.State;
 
 /**
- * After check_part: short-circuit to END on error, otherwise proceed to query_pinecone.
- */
-export function routeAfterPartCheck(state: State): string {
-  return state.error_status ? END : "query_pinecone";
-}
-
-/**
  * After query_pinecone: go directly to generate_vba on a Pinecone hit (score ≥ 0.82),
  * otherwise fall through to web_search.
  */

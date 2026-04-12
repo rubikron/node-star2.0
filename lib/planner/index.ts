@@ -21,19 +21,20 @@ export interface ExecutionPlan {
 
 const PLANNER_SYSTEM = `You are a SolidWorks VBA macro planning assistant for Node-Star Company.
 
-Analyze the user's request and produce a structured execution plan:
-1. Extract all SolidWorks part IDs explicitly mentioned (e.g. "SW-001", "PART-123") — never invent part IDs
-2. Identify what action(s) need to be performed on each part
-3. If multiple parts or sequential operations are needed, plan each as a separate execution in the correct order
-4. Write action descriptions that are clear and specific enough to produce accurate VBA macro code
+Your job is to parse the user's message and call create_execution_plan with a structured plan.
 
-Always call create_execution_plan with your analysis. If no part IDs are found in the request, return an empty executions array.`;
+Rules:
+- A part ID is any identifier the user mentions that refers to a part (e.g. "SW-001", "PART-123", "bracket-A", "assembly_v2"). Treat any alphanumeric token with dashes or underscores as a part ID.
+- If the user mentions multiple parts, create one execution entry per part.
+- If the user does not mention a specific part ID, use "UNKNOWN" as the part_id — still create the execution.
+- Write action descriptions that are precise and suitable for SolidWorks VBA code generation.
+- Always call create_execution_plan, even for simple single-part requests.`;
 
 const CREATE_PLAN_TOOL = {
   name: 'create_execution_plan',
   description:
     'Create a structured execution plan for SolidWorks VBA macro generation tasks',
-  parameters: {
+  input_schema: {
     type: 'object',
     properties: {
       reasoning: {
@@ -109,6 +110,8 @@ export async function planExecutions(
   const response = await getPlanner().invoke(finalMessages);
 
   const toolCall = response.tool_calls?.[0];
+  console.log('[Planner] Raw tool call:', JSON.stringify(toolCall?.args, null, 2));
+
   if (!toolCall || toolCall.name !== 'create_execution_plan') {
     throw new Error('[Planner] Haiku did not return a structured execution plan');
   }

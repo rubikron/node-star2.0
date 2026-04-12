@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { END } from "@langchain/langgraph";
-import { routeAfterPartCheck, routeAfterPinecone, routeAfterVerify } from "./edges";
+import { routeAfterPinecone, routeAfterVerify } from "./edges";
 import type { VBAState } from "./state";
 
 type State = typeof VBAState.State;
@@ -9,8 +9,6 @@ const baseState: State = {
   part_id: "SW-001",
   action: "add fillet",
   debug: false,
-  part_type: null,
-  part_description: null,
   pinecone_vba: null,
   pinecone_score: null,
   search_results: null,
@@ -18,20 +16,8 @@ const baseState: State = {
   retry_count: 0,
   verify_error: null,
   final_vba: null,
-  error_status: null,
-  error_message: null,
   debug_trace: {},
 };
-
-describe("routeAfterPartCheck", () => {
-  it("routes to query_pinecone when no error", () => {
-    expect(routeAfterPartCheck({ ...baseState, part_type: "sheet_metal" })).toBe("query_pinecone");
-  });
-
-  it("routes to END on error_status 404", () => {
-    expect(routeAfterPartCheck({ ...baseState, error_status: 404 })).toBe(END);
-  });
-});
 
 describe("routeAfterPinecone", () => {
   it("routes to generate_vba on score >= 0.82", () => {
