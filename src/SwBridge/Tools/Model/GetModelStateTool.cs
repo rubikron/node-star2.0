@@ -215,7 +215,7 @@ public sealed class GetModelStateTool : ISwTool
 
             sb.AppendLine($"  [{i + 1,2}]  {f.Name,-28}  {f.TypeLabel,-20}{dimTag}{suppTag}");
 
-            // Sketch sub-detail: reference plane, normal, origin, constraints, segment counts.
+            // Sketch sub-detail: reference plane, normal, origin, constraints, and full geometry.
             if (f.Sketch is { } sk)
             {
                 var normalStr = sk.Normal is { } n
@@ -225,14 +225,48 @@ public sealed class GetModelStateTool : ISwTool
                     ? $"({o[0]:F1}, {o[1]:F1}, {o[2]:F1}) mm"
                     : "?";
 
-                sb.AppendLine($"         Plane: {sk.PlaneName,-16}  Normal: {normalStr,-22}  Origin: {originStr,-24}  {sk.ConstrainedStatus}");
+                sb.AppendLine($"         Plane: {sk.PlaneName,-16}  Normal: {normalStr,-22}  Origin: {originStr}  {sk.ConstrainedStatus}");
 
-                var segs = new List<string>(4);
-                if (sk.Lines    > 0) segs.Add($"{sk.Lines} line{(sk.Lines    != 1 ? "s" : "")}");
-                if (sk.Arcs     > 0) segs.Add($"{sk.Arcs} arc{(sk.Arcs      != 1 ? "s" : "")}");
-                if (sk.Splines  > 0) segs.Add($"{sk.Splines} spline{(sk.Splines  != 1 ? "s" : "")}");
-                if (sk.Ellipses > 0) segs.Add($"{sk.Ellipses} ellipse{(sk.Ellipses != 1 ? "s" : "")}");
-                sb.AppendLine($"         Segments: {(segs.Count > 0 ? string.Join(", ", segs) : "none")}");
+                // Group segments by type and print geometry.
+                var byType = sk.Segments
+                    .GroupBy(s => s.SegType)
+                    .OrderBy(g => g.Key, StringComparer.Ordinal);
+
+                foreach (var group in byType)
+                {
+                    sb.AppendLine($"         {group.Key}s ({group.Count()}):");
+                    foreach (var seg in group)
+                    {
+                        var ctag = seg.IsConstruction ? " [c]" : "";
+                        switch (seg.SegType)
+                        {
+                            case "Line" when seg.Start.HasValue && seg.End.HasValue:
+                                sb.AppendLine(
+                                    $"           ({seg.Start.Value.X:F2}, {seg.Start.Value.Y:F2}, {seg.Start.Value.Z:F2})" +
+                                    $" → ({seg.End.Value.X:F2}, {seg.End.Value.Y:F2}, {seg.End.Value.Z:F2}) mm{ctag}");
+                                break;
+
+                            case "Circle" when seg.Center.HasValue:
+                                sb.AppendLine(
+                                    $"           Center: ({seg.Center.Value.X:F2}, {seg.Center.Value.Y:F2}, {seg.Center.Value.Z:F2})  R: {seg.RadiusMm:F2} mm{ctag}");
+                                break;
+
+                            case "Arc" when seg.Center.HasValue && seg.Start.HasValue && seg.End.HasValue:
+                                sb.AppendLine(
+                                    $"           Center: ({seg.Center.Value.X:F2}, {seg.Center.Value.Y:F2}, {seg.Center.Value.Z:F2})  R: {seg.RadiusMm:F2} mm  " +
+                                    $"({seg.Start.Value.X:F2}, {seg.Start.Value.Y:F2}, {seg.Start.Value.Z:F2})" +
+                                    $" → ({seg.End.Value.X:F2}, {seg.End.Value.Y:F2}, {seg.End.Value.Z:F2}) mm{ctag}");
+                                break;
+
+                            default:
+                                sb.AppendLine($"           {seg.SegType}{ctag}");
+                                break;
+                        }
+                    }
+                }
+
+                if (sk.Relations.Count > 0)
+                    sb.AppendLine($"         Relations: {string.Join(", ", sk.Relations)}");
             }
 
             // Extrude sub-detail: boss/cut, end condition, depth, direction, draft.
@@ -374,7 +408,7 @@ public sealed class GetModelStateTool : ISwTool
 
     /// <summary>
     /// Collects sketch geometry detail: reference plane, world-space normal and origin,
-    /// constrained status, and segment counts (lines, arcs, splines, ellipses).
+    /// constrained status, all segment coordinates, and deduplicated relation summary.
     /// </summary>
     private static SketchInfo? TryCollectSketchDetail(
         IFeature feat,
@@ -428,22 +462,119 @@ public sealed class GetModelStateTool : ISwTool
                 _ => $"status:{constraintRaw}"
             };
 
-            // ── Segment counts ───────────────────────────────────────────────
-            int lines    = TryGetInt(() => sketch.GetLineCount());
-            int arcs     = TryGetInt(() => sketch.GetArcCount());
-            int ellipses = TryGetInt(() => sketch.GetEllipseCount());
-            int splines  = 0;
-            try
-            {
-                int splinePoints = 0;
-                splines = sketch.GetSplineCount(ref splinePoints);
-            }
-            catch { }
+            // ── Segment geometry + relations ─────────────────────────────────
+            var segments = new List<SketchSegmentInfo>();
+            var seenRelPtrs = new HashSet<IntPtr>();
+            var relationTypeCounts = new Dictionary<string, int>(StringComparer.Ordinal);
 
-            return new SketchInfo(planeName, normal, origin, constrainedStatus, lines, arcs, ellipses, splines);
+            var rawSegs = TryGet(() => sketch.GetSketchSegments() as object[]);
+            if (rawSegs is not null)
+            {
+                foreach (var obj in rawSegs)
+                {
+                    if (obj is not ISketchSegment seg) continue;
+
+                    bool isConst = TryGetBool(() => seg.ConstructionGeometry);
+                    SketchSegmentInfo? info = null;
+
+                    if (obj is ISketchLine line)
+                    {
+                        var sp = TryGet(() => line.IGetStartPoint2());
+                        var ep = TryGet(() => line.IGetEndPoint2());
+                        if (sp is not null && ep is not null)
+                            info = new SketchSegmentInfo("Line", Pt(sp), Pt(ep), null, null, isConst);
+                    }
+                    else if (obj is ISketchArc arc)
+                    {
+                        var cp = TryGet(() => arc.IGetCenterPoint2());
+                        var sp = TryGet(() => arc.IGetStartPoint2());
+                        var ep = TryGet(() => arc.IGetEndPoint2());
+                        double r = TryGetDouble(() => arc.GetRadius()) * 1000;
+                        bool isCircle = TryGetInt(() => arc.IsCircle()) != 0;
+                        info = new SketchSegmentInfo(
+                            isCircle ? "Circle" : "Arc",
+                            sp is not null ? Pt(sp) : null,
+                            ep is not null ? Pt(ep) : null,
+                            cp is not null ? Pt(cp) : null,
+                            r, isConst);
+                    }
+                    else if (obj is ISketchEllipse ellipse)
+                    {
+                        var cp = TryGet(() => ellipse.IGetCenterPoint2());
+                        info = new SketchSegmentInfo("Ellipse", null, null, cp is not null ? Pt(cp) : null, null, isConst);
+                    }
+                    else if (obj is ISketchSpline)
+                    {
+                        info = new SketchSegmentInfo("Spline", null, null, null, null, isConst);
+                    }
+
+                    if (info is not null)
+                        segments.Add(info);
+
+                    // Collect this segment's relations, deduplicating by COM identity.
+                    var rels = TryGet(() => seg.GetRelations() as object[]);
+                    if (rels is null) continue;
+
+                    foreach (var relObj in rels)
+                    {
+                        if (relObj is not ISketchRelation rel) continue;
+                        try
+                        {
+                            IntPtr ptr = Marshal.GetIUnknownForObject(rel);
+                            Marshal.Release(ptr);
+                            if (!seenRelPtrs.Add(ptr)) continue;
+
+                            var label = MapRelationType(TryGetInt(() => rel.GetRelationType()));
+                            if (label is not null)
+                                relationTypeCounts[label] = relationTypeCounts.GetValueOrDefault(label) + 1;
+                        }
+                        catch { }
+                    }
+                }
+            }
+
+            // Format relation summary: "Coincident×4, Equal×2, ..."
+            var relations = relationTypeCounts
+                .OrderByDescending(kv => kv.Value)
+                .ThenBy(kv => kv.Key, StringComparer.Ordinal)
+                .Select(kv => kv.Value > 1 ? $"{kv.Key}×{kv.Value}" : kv.Key)
+                .ToList();
+
+            return new SketchInfo(planeName, normal, origin, constrainedStatus, segments, relations);
         }
         catch { return null; }
     }
+
+    private static (double X, double Y, double Z) Pt(ISketchPoint p) =>
+        (TryGetDouble(() => p.X) * 1000, TryGetDouble(() => p.Y) * 1000, TryGetDouble(() => p.Z) * 1000);
+
+    private static string? MapRelationType(int t) => t switch
+    {
+        1  => "Distance",
+        2  => "Angle",
+        3  => "Radius",
+        4  => "Horizontal",
+        5  => "Vertical",
+        6  => "Tangent",
+        7  => "Parallel",
+        8  => "Perpendicular",
+        9  => "Coincident",
+        10 => "Concentric",
+        11 => "Symmetric",
+        12 => "Midpoint",
+        13 => "Intersection",
+        14 => "Equal",
+        15 => "Diameter",
+        17 => "Fixed",
+        25 => "HorizPoints",
+        26 => "VertPoints",
+        27 => "Collinear",
+        40 => "Pierce",
+        42 => "MergePoints",
+        44 => "ArcLength",
+        45 => "Normal",
+        _  => null   // snap/grid/internal types — not useful to the LLM
+    };
 
     // ── Extrude sub-detail ───────────────────────────────────────────────────
 
@@ -844,10 +975,16 @@ public sealed class GetModelStateTool : ISwTool
         double[]? Normal,
         double[]? Origin,
         string    ConstrainedStatus,
-        int       Lines,
-        int       Arcs,
-        int       Ellipses,
-        int       Splines);
+        IReadOnlyList<SketchSegmentInfo> Segments,
+        IReadOnlyList<string> Relations);
+
+    private sealed record SketchSegmentInfo(
+        string SegType,     // "Line", "Arc", "Circle", "Ellipse", "Spline"
+        (double X, double Y, double Z)? Start,
+        (double X, double Y, double Z)? End,
+        (double X, double Y, double Z)? Center,
+        double? RadiusMm,
+        bool IsConstruction);
 
     private sealed record ExtrudeInfo(
         string   BossOrCut,
