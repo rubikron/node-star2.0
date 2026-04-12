@@ -38,26 +38,32 @@ public sealed class SwStateCollector
         var app = connector.Application
             ?? throw new InvalidOperationException("SOLIDWORKS is not connected.");
 
-        var activeDocumentCom = GetActiveDocument(app);
-        var documents = CollectOpenDocuments(app);
-        var activeDocument = TryCollectDocument(activeDocumentCom);
+        var activeDocumentCom       = GetActiveDocument(app);
+        var documents               = CollectOpenDocuments(app);
+        var activeDetail            = TryCollectDocument(activeDocumentCom);
+        var activeDocumentState     = ToDocumentState(activeDetail);
         var activeConfigurationName = TryGetActiveConfigurationName(activeDocumentCom);
-        var selection = CollectSelection(activeDocument, activeDocumentCom);
+        var selection               = CollectSelection(activeDocumentState, activeDocumentCom);
 
-        if (activeDocument is not null && documents.All(doc => !string.Equals(doc.Id, activeDocument.Id, StringComparison.Ordinal)))
+        // Ensure the active document is present in the open-documents list
+        if (activeDetail is not null && documents.All(doc => !string.Equals(doc.Id, activeDetail.Id, StringComparison.Ordinal)))
         {
-            documents = documents.Append(activeDocument)
+            documents = documents.Append(activeDetail)
                 .OrderBy(static doc => doc.Id, StringComparer.Ordinal)
                 .ToArray();
         }
 
         return SwState.Create(
             connector.RevisionNumber,
-            activeDocument,
+            activeDocumentState,
             documents,
             selection,
             activeConfigurationName);
     }
+
+    private static SwDocumentState? ToDocumentState(SwDocumentDetail? detail) =>
+        detail is null ? null
+            : new SwDocumentState(detail.Id, detail.Title, detail.Path, detail.DocumentType, detail.ConfigurationName);
 
     /// <summary>
     /// Builds a stable document identity from the best available information.
@@ -75,9 +81,9 @@ public sealed class SwStateCollector
         return $"unsaved:{fallbackToken}";
     }
 
-    private IReadOnlyList<SwDocumentState> CollectOpenDocuments(ISldWorks app)
+    private IReadOnlyList<SwDocumentDetail> CollectOpenDocuments(ISldWorks app)
     {
-        var documents = new List<SwDocumentState>();
+        var documents = new List<SwDocumentDetail>();
         var current = SafeGet(
             "ISldWorks.IGetFirstDocument2",
             () => app.IGetFirstDocument2());
@@ -86,9 +92,7 @@ public sealed class SwStateCollector
         {
             var document = TryCollectDocument(current);
             if (document is not null)
-            {
                 documents.Add(document);
-            }
 
             current = SafeGet(
                 "IModelDoc2.IGetNext",
@@ -167,22 +171,28 @@ public sealed class SwStateCollector
             .ToArray();
     }
 
-    private SwDocumentState? TryCollectDocument(IModelDoc2? document)
+    private SwDocumentDetail? TryCollectDocument(IModelDoc2? document)
     {
         if (document is null)
-        {
             return null;
-        }
 
-        var path = Normalize(SafeGetString("IModelDoc2.GetPathName", document.GetPathName));
-        var title = Normalize(SafeGetString("IModelDoc2.GetTitle", document.GetTitle));
-        var typeCode = MapDocumentType(
-            SafeGetInt("IModelDoc2.GetType", document.GetType));
+        var path          = Normalize(SafeGetString("IModelDoc2.GetPathName", document.GetPathName));
+        var title         = Normalize(SafeGetString("IModelDoc2.GetTitle",    document.GetTitle));
+        var typeCode      = MapDocumentType(SafeGetInt("IModelDoc2.GetType",  document.GetType));
         var configuration = TryGetActiveConfigurationName(document);
-        var runtimeToken = BuildRuntimeToken(document, title, typeCode);
-        var identity = BuildDocumentIdentity(path, runtimeToken);
+        var runtimeToken  = BuildRuntimeToken(document, title, typeCode);
+        var identity      = BuildDocumentIdentity(path, runtimeToken);
 
-        return new SwDocumentState(identity, title, path, typeCode, configuration);
+        // Model data fields are empty here — GetSwStateTool enriches them after collection.
+        return new SwDocumentDetail
+        {
+            Id                = identity,
+            Title             = title,
+            Path              = path,
+            DocumentType      = typeCode,
+            ConfigurationName = configuration,
+            ModelSnapshot     = string.Empty
+        };
     }
 
     private string? TryGetActiveConfigurationName(IModelDoc2? document)

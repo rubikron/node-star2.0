@@ -11,14 +11,20 @@ namespace SwBridge.Tools.Model;
 /// </summary>
 public sealed class ModelStateCollector
 {
-    // ── Public entry point ───────────────────────────────────────────────────
+    // ── Public entry points ──────────────────────────────────────────────────
 
+    /// <summary>Collects model state for the currently active document.</summary>
     public ModelState Collect(ISldWorks app)
     {
         var doc = TryGet(() => app.IActiveDoc2);
         if (doc is null)
             return ModelState.Create("(none)", null, "Error", false, null, null, null);
+        return CollectDocument(doc, app);
+    }
 
+    /// <summary>Collects model state for a specific document.</summary>
+    public ModelState CollectDocument(IModelDoc2 doc, ISldWorks app)
+    {
         var docTypeInt = TryGetInt(() => doc.GetType());
         var title      = TryGet(() => doc.GetTitle()) ?? "untitled";
         var filePath   = Normalize(TryGet(() => doc.GetPathName()));

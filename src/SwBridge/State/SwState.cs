@@ -19,64 +19,39 @@ public sealed record SwState
         WriteIndented = false
     };
 
-    /// <summary>
-    /// Gets the deterministic token for this snapshot.
-    /// </summary>
+    /// <summary>Gets the deterministic token for this snapshot.</summary>
     [JsonPropertyName("snapshot")]
     public string SnapshotToken { get; init; } = string.Empty;
 
-    /// <summary>
-    /// Gets the connected SOLIDWORKS revision number when available.
-    /// </summary>
+    /// <summary>Gets the connected SOLIDWORKS revision number when available.</summary>
     [JsonPropertyName("SwVersion")]
     public string? RevisionNumber { get; init; }
 
-    /// <summary>
-    /// Gets the active document summary, or <see langword="null"/> if no document is active.
-    /// </summary>
+    /// <summary>Gets the active document summary, or <see langword="null"/> if no document is active.</summary>
     [JsonPropertyName("activeDoc")]
     public SwDocumentState? ActiveDocument { get; init; }
 
-    /// <summary>
-    /// Gets the currently open documents in deterministic order.
-    /// </summary>
+    /// <summary>Gets the currently open documents in deterministic order (with full model data).</summary>
     [JsonPropertyName("documents")]
-    public IReadOnlyList<SwDocumentState> OpenDocuments { get; init; } = [];
+    public IReadOnlyList<SwDocumentDetail> OpenDocuments { get; init; } = [];
 
-    /// <summary>
-    /// Gets the current selection summaries in deterministic order.
-    /// </summary>
+    /// <summary>Gets the current selection summaries in deterministic order.</summary>
     [JsonPropertyName("selection")]
     public IReadOnlyList<SwSelectionState> Selection { get; init; } = [];
 
-    /// <summary>
-    /// Gets the active configuration name for the active document when available.
-    /// </summary>
+    /// <summary>Gets the active configuration name for the active document when available.</summary>
     [JsonPropertyName("activeConfig")]
     public string? ActiveConfigurationName { get; init; }
 
     /// <summary>
-    /// Gets the active document's model state (feature tree, mates, geometry) when available.
-    /// </summary>
-    [JsonPropertyName("state")]
-    public ModelState? ModelState { get; init; }
-
-    /// <summary>
     /// Creates a normalized snapshot with a deterministic token.
     /// </summary>
-    /// <param name="revisionNumber">Connected SOLIDWORKS revision number.</param>
-    /// <param name="activeDocument">Active document summary.</param>
-    /// <param name="openDocuments">Open document summaries.</param>
-    /// <param name="selection">Current selection summaries.</param>
-    /// <param name="activeConfigurationName">Active configuration name.</param>
-    /// <returns>A normalized, tokenized snapshot.</returns>
     public static SwState Create(
         string? revisionNumber,
         SwDocumentState? activeDocument,
-        IEnumerable<SwDocumentState>? openDocuments,
+        IEnumerable<SwDocumentDetail>? openDocuments,
         IEnumerable<SwSelectionState>? selection,
-        string? activeConfigurationName,
-        ModelState? modelState = null)
+        string? activeConfigurationName)
     {
         var normalized = new SwState
         {
@@ -88,8 +63,7 @@ public sealed record SwState
             Selection = (selection ?? [])
                 .OrderBy(static item => item.Key, StringComparer.Ordinal)
                 .ToArray(),
-            ActiveConfigurationName = Normalize(activeConfigurationName),
-            ModelState = modelState
+            ActiveConfigurationName = Normalize(activeConfigurationName)
         };
 
         return normalized with
@@ -98,30 +72,31 @@ public sealed record SwState
         };
     }
 
-    /// <summary>
-    /// Serializes the snapshot into compact JSON.
-    /// </summary>
-    /// <returns>Compact JSON representing the snapshot.</returns>
+    /// <summary>Serializes the snapshot into compact JSON.</summary>
     public string ToJson() => JsonSerializer.Serialize(this, JsonOptions);
 
     /// <summary>
     /// Serializes a full-state tool response containing this snapshot.
+    /// Root level: mode, snapshot, SwVersion.
+    /// Under "state": activeDoc, selection, activeConfig, documents (with full model data).
     /// </summary>
-    /// <returns>Compact JSON with the full snapshot payload.</returns>
     public string ToFullResponseJson() =>
         JsonSerializer.Serialize(
-            new SwStateFullResponse
+            new SwFullSnapshot
             {
-                Mode = "full",
-                State = this
+                SnapshotToken = SnapshotToken,
+                SwVersion     = RevisionNumber,
+                State         = new SwSessionContext
+                {
+                    ActiveDocument         = ActiveDocument,
+                    Selection              = Selection,
+                    ActiveConfigurationName = ActiveConfigurationName,
+                    Documents              = OpenDocuments
+                }
             },
             JsonOptions);
 
-    /// <summary>
-    /// Builds a compact patch from a previous snapshot to the current one.
-    /// </summary>
-    /// <param name="previous">The previous snapshot, if available.</param>
-    /// <returns>A patch payload describing only the changed fields.</returns>
+    /// <summary>Builds a compact patch from a previous snapshot to the current one.</summary>
     public SwStatePatch BuildPatch(SwState? previous)
     {
         var previousSnapshotToken = previous?.SnapshotToken;
@@ -130,75 +105,66 @@ public sealed record SwState
         var patch = new SwStatePatch
         {
             PreviousSnapshotToken = previousSnapshotToken,
-            SnapshotToken = SnapshotToken
+            SnapshotToken         = SnapshotToken
         };
 
         if (!string.Equals(previous.RevisionNumber, RevisionNumber, StringComparison.Ordinal))
-        {
             patch.RevisionNumber = RevisionNumber;
-        }
 
         if (previous.ActiveDocument != ActiveDocument)
-        {
             patch.ActiveDocument = ActiveDocument;
-        }
 
         if (!string.Equals(previous.ActiveConfigurationName, ActiveConfigurationName, StringComparison.Ordinal))
-        {
             patch.ActiveConfigurationName = ActiveConfigurationName;
-        }
 
         if (!previous.Selection.SequenceEqual(Selection))
-        {
             patch.Selection = Selection;
-        }
 
         var documentPatch = SwDocumentCollectionPatch.Create(previous.OpenDocuments, OpenDocuments);
         if (!documentPatch.IsEmpty)
-        {
             patch.OpenDocuments = documentPatch;
-        }
-
-        if (previous.ModelState?.SnapshotToken != ModelState?.SnapshotToken)
-        {
-            patch.ModelState = ModelState;
-        }
 
         return patch;
     }
 
-    /// <summary>
-    /// Serializes a patch response from a previous snapshot to the current one.
-    /// </summary>
-    /// <param name="previous">The previous snapshot, if available.</param>
-    /// <returns>Compact JSON containing only the changed fields.</returns>
+    /// <summary>Serializes a patch response from a previous snapshot to the current one.</summary>
     public string ToPatchResponseJson(SwState? previous) =>
         JsonSerializer.Serialize(BuildPatch(previous), JsonOptions);
 
     /// <summary>
     /// Deserializes a snapshot from the current full response envelope.
+    /// Handles both the new root-level shape and the legacy wrapped shape.
     /// </summary>
-    /// <param name="json">Serialized JSON from a prior state tool response.</param>
-    /// <returns>The deserialized snapshot, or <see langword="null"/> if parsing fails.</returns>
     public static SwState? FromJson(string? json)
     {
         if (string.IsNullOrWhiteSpace(json))
-        {
             return null;
-        }
 
         try
         {
             var node = JsonNode.Parse(json);
             if (node is not JsonObject root)
-            {
                 return null;
+
+            // New shape: snapshot at root alongside mode/SwVersion
+            if (root["snapshot"] is not null && root["state"] is JsonObject)
+            {
+                // Reconstruct SwState from the flattened root + state object
+                var stateNode = root["state"]!.AsObject();
+                return new SwState
+                {
+                    SnapshotToken           = root["snapshot"]?.GetValue<string>() ?? string.Empty,
+                    RevisionNumber          = root["SwVersion"]?.GetValue<string>(),
+                    ActiveDocument          = stateNode["activeDoc"]?.Deserialize<SwDocumentState>(JsonOptions),
+                    OpenDocuments           = stateNode["documents"]?.Deserialize<SwDocumentDetail[]>(JsonOptions) ?? [],
+                    Selection               = stateNode["selection"]?.Deserialize<SwSelectionState[]>(JsonOptions) ?? [],
+                    ActiveConfigurationName = stateNode["activeConfig"]?.GetValue<string>()
+                };
             }
 
-            if (root["state"] is JsonNode stateNode)
-            {
-                return stateNode.Deserialize<SwState>(JsonOptions);
-            }
+            // Legacy shape: state wraps the full SwState object
+            if (root["state"] is JsonNode legacyStateNode)
+                return legacyStateNode.Deserialize<SwState>(JsonOptions);
 
             return root.Deserialize<SwState>(JsonOptions);
         }
@@ -213,12 +179,11 @@ public sealed record SwState
         var payload = JsonSerializer.Serialize(
             new SnapshotTokenPayload
             {
-                RevisionNumber = state.RevisionNumber,
-                ActiveDocument = state.ActiveDocument,
-                OpenDocuments = state.OpenDocuments,
-                Selection = state.Selection,
-                ActiveConfigurationName = state.ActiveConfigurationName,
-                ModelStateToken = state.ModelState?.SnapshotToken
+                RevisionNumber          = state.RevisionNumber,
+                ActiveDocument          = state.ActiveDocument,
+                DocumentModelTokens     = string.Join(",", state.OpenDocuments.Select(d => $"{d.Id}:{d.ModelSnapshot}")),
+                Selection               = state.Selection,
+                ActiveConfigurationName = state.ActiveConfigurationName
             },
             JsonOptions);
 
@@ -237,166 +202,155 @@ public sealed record SwState
         [JsonPropertyName("activeDoc")]
         public SwDocumentState? ActiveDocument { get; init; }
 
-        [JsonPropertyName("documents")]
-        public IReadOnlyList<SwDocumentState> OpenDocuments { get; init; } = [];
+        [JsonPropertyName("docTokens")]
+        public string? DocumentModelTokens { get; init; }
 
         [JsonPropertyName("selection")]
         public IReadOnlyList<SwSelectionState> Selection { get; init; } = [];
 
         [JsonPropertyName("activeConfig")]
         public string? ActiveConfigurationName { get; init; }
-
-        [JsonPropertyName("stateToken")]
-        public string? ModelStateToken { get; init; }
     }
 }
 
-/// <summary>
-/// Represents a compact document summary within a session snapshot.
-/// </summary>
-/// <param name="Id">Stable document identity used for diffs.</param>
-/// <param name="Title">Current document title.</param>
-/// <param name="Path">Document path when saved to disk.</param>
-/// <param name="DocumentType">Compact document type code.</param>
-/// <param name="ConfigurationName">Active configuration for the document when available.</param>
-public sealed record SwDocumentState(
-    [property: JsonPropertyName("id")] string Id,
-    [property: JsonPropertyName("title")] string? Title,
-    [property: JsonPropertyName("path")] string? Path,
-    [property: JsonPropertyName("type")] string DocumentType,
-    [property: JsonPropertyName("config")] string? ConfigurationName);
+// ── Response envelope records ─────────────────────────────────────────────────
 
 /// <summary>
-/// Represents a compact summary of one selected entity in the active document.
+/// Full-state response envelope: mode, snapshot, SwVersion at root;
+/// session context (activeDoc, selection, activeConfig, documents) under "state".
 /// </summary>
-/// <param name="Key">Stable selection identity used for diffs.</param>
-/// <param name="DocumentId">Owning document identity.</param>
-/// <param name="SelectionType">Compact selection type code.</param>
-/// <param name="Name">Best-effort human-readable selection name.</param>
-/// <param name="Mark">Selection mark when available.</param>
-public sealed record SwSelectionState(
-    [property: JsonPropertyName("key")] string Key,
-    [property: JsonPropertyName("documentId")] string DocumentId,
-    [property: JsonPropertyName("type")] string SelectionType,
-    [property: JsonPropertyName("name")] string? Name,
-    [property: JsonPropertyName("mark")] int? Mark);
-
-/// <summary>
-/// Represents the full-state response envelope returned by the session tool.
-/// </summary>
-public sealed record SwStateFullResponse
+public sealed record SwFullSnapshot
 {
-    /// <summary>
-    /// Gets the response mode.
-    /// </summary>
     [JsonPropertyName("mode")]
     public string Mode { get; init; } = "full";
 
-    /// <summary>
-    /// Gets the current full snapshot.
-    /// </summary>
+    [JsonPropertyName("snapshot")]
+    public string SnapshotToken { get; init; } = string.Empty;
+
+    [JsonPropertyName("SwVersion")]
+    public string? SwVersion { get; init; }
+
     [JsonPropertyName("state")]
-    public SwState State { get; init; } = SwState.Create(null, null, null, null, null);
+    public SwSessionContext State { get; init; } = new();
 }
 
+/// <summary>Session context: active document reference, selection, config, and full document list.</summary>
+public sealed record SwSessionContext
+{
+    [JsonPropertyName("activeDoc")]
+    public SwDocumentState? ActiveDocument { get; init; }
+
+    [JsonPropertyName("selection")]
+    public IReadOnlyList<SwSelectionState> Selection { get; init; } = [];
+
+    [JsonPropertyName("activeConfig")]
+    public string? ActiveConfigurationName { get; init; }
+
+    [JsonPropertyName("documents")]
+    public IReadOnlyList<SwDocumentDetail> Documents { get; init; } = [];
+}
+
+// ── Data records ──────────────────────────────────────────────────────────────
+
 /// <summary>
-/// Represents a compact patch response between two snapshots.
+/// Compact document reference used for the <c>activeDoc</c> field.
+/// Contains only session metadata (id, title, path, type, config).
 /// </summary>
+public sealed record SwDocumentState(
+    [property: JsonPropertyName("id")]     string  Id,
+    [property: JsonPropertyName("title")]  string? Title,
+    [property: JsonPropertyName("path")]   string? Path,
+    [property: JsonPropertyName("type")]   string  DocumentType,
+    [property: JsonPropertyName("config")] string? ConfigurationName);
+
+/// <summary>
+/// Full document entry combining session metadata with model data.
+/// Used in the <c>documents</c> array.
+/// For parts: <see cref="Features"/> is populated; <see cref="Components"/> and <see cref="Mates"/> are null.
+/// For assemblies: <see cref="Components"/> and <see cref="Mates"/> are populated; <see cref="Features"/> is null.
+/// </summary>
+public sealed record SwDocumentDetail
+{
+    // Session metadata
+    [JsonPropertyName("id")]     public string  Id               { get; init; } = string.Empty;
+    [JsonPropertyName("title")]  public string? Title            { get; init; }
+    [JsonPropertyName("path")]   public string? Path             { get; init; }
+    [JsonPropertyName("type")]   public string  DocumentType     { get; init; } = string.Empty;
+    [JsonPropertyName("config")] public string? ConfigurationName { get; init; }
+
+    // Model snapshot token (for change detection in patch diffs)
+    [JsonPropertyName("snapshot")] public string ModelSnapshot { get; init; } = string.Empty;
+
+    // Geometry
+    [JsonPropertyName("unsaved")]   public bool      Unsaved   { get; init; }
+    [JsonPropertyName("boundsMm")]  public double[]? BoundsMm  { get; init; }
+    [JsonPropertyName("massG")]     public double?   MassGrams { get; init; }
+    [JsonPropertyName("volumeMm3")] public double?   VolumeMm3 { get; init; }
+
+    // Part-specific model data (null for assemblies and drawings)
+    [JsonPropertyName("features")]   public IReadOnlyList<FeatureInfo>?   Features   { get; init; }
+
+    // Assembly-specific model data (null for parts and drawings)
+    [JsonPropertyName("components")] public IReadOnlyList<ComponentInfo>? Components { get; init; }
+    [JsonPropertyName("mates")]      public IReadOnlyList<MateInfo>?      Mates      { get; init; }
+}
+
+/// <summary>Represents a compact summary of one selected entity in the active document.</summary>
+public sealed record SwSelectionState(
+    [property: JsonPropertyName("key")]        string  Key,
+    [property: JsonPropertyName("documentId")] string  DocumentId,
+    [property: JsonPropertyName("type")]       string  SelectionType,
+    [property: JsonPropertyName("name")]       string? Name,
+    [property: JsonPropertyName("mark")]       int?    Mark);
+
+/// <summary>Represents a compact patch response between two snapshots.</summary>
 public sealed record SwStatePatch
 {
-    /// <summary>
-    /// Gets the response mode.
-    /// </summary>
     [JsonPropertyName("mode")]
     public string Mode { get; init; } = "patch";
 
-    /// <summary>
-    /// Gets the previous snapshot token when one was available.
-    /// </summary>
     [JsonPropertyName("prevSnap")]
     public string? PreviousSnapshotToken { get; set; }
 
-    /// <summary>
-    /// Gets the current snapshot token.
-    /// </summary>
     [JsonPropertyName("snapshot")]
     public string SnapshotToken { get; set; } = string.Empty;
 
-    /// <summary>
-    /// Gets the updated SOLIDWORKS revision number when it changed.
-    /// </summary>
     [JsonPropertyName("SwVersion")]
     public string? RevisionNumber { get; set; }
 
-    /// <summary>
-    /// Gets the updated active document when it changed.
-    /// </summary>
     [JsonPropertyName("activeDoc")]
     public SwDocumentState? ActiveDocument { get; set; }
 
-    /// <summary>
-    /// Gets document collection changes when the open-document set changed.
-    /// </summary>
     [JsonPropertyName("documents")]
     public SwDocumentCollectionPatch? OpenDocuments { get; set; }
 
-    /// <summary>
-    /// Gets the updated selection list when the selection changed.
-    /// </summary>
     [JsonPropertyName("selection")]
     public IReadOnlyList<SwSelectionState>? Selection { get; set; }
 
-    /// <summary>
-    /// Gets the updated active configuration name when it changed.
-    /// </summary>
     [JsonPropertyName("activeConfig")]
     public string? ActiveConfigurationName { get; set; }
 
-    /// <summary>
-    /// Gets the updated model state when the document structure changed.
-    /// </summary>
-    [JsonPropertyName("state")]
-    public ModelState? ModelState { get; set; }
-
-    /// <summary>
-    /// Gets whether the patch carries any actual field changes.
-    /// </summary>
     [JsonIgnore]
     public bool IsEmpty =>
         RevisionNumber is null &&
         ActiveDocument is null &&
         OpenDocuments is null &&
         Selection is null &&
-        ActiveConfigurationName is null &&
-        ModelState is null;
+        ActiveConfigurationName is null;
 }
 
-/// <summary>
-/// Represents changes to the open-document collection.
-/// </summary>
+/// <summary>Represents changes to the open-document collection.</summary>
 public sealed record SwDocumentCollectionPatch
 {
-    /// <summary>
-    /// Gets newly opened documents.
-    /// </summary>
     [JsonPropertyName("added")]
-    public IReadOnlyList<SwDocumentState>? Added { get; init; }
+    public IReadOnlyList<SwDocumentDetail>? Added { get; init; }
 
-    /// <summary>
-    /// Gets updated documents whose tracked fields changed.
-    /// </summary>
     [JsonPropertyName("updated")]
-    public IReadOnlyList<SwDocumentState>? Updated { get; init; }
+    public IReadOnlyList<SwDocumentDetail>? Updated { get; init; }
 
-    /// <summary>
-    /// Gets removed document identities.
-    /// </summary>
     [JsonPropertyName("removed")]
     public IReadOnlyList<string>? Removed { get; init; }
 
-    /// <summary>
-    /// Gets whether the collection patch is empty.
-    /// </summary>
     [JsonIgnore]
     public bool IsEmpty =>
         Added is null &&
@@ -405,23 +359,22 @@ public sealed record SwDocumentCollectionPatch
 
     /// <summary>
     /// Computes a collection patch between previous and current document sets.
+    /// Detects changes by document id (presence/absence) and model snapshot token (content changes).
     /// </summary>
-    /// <param name="previous">Previous document set.</param>
-    /// <param name="current">Current document set.</param>
-    /// <returns>A patch describing only changed entries.</returns>
     public static SwDocumentCollectionPatch Create(
-        IReadOnlyList<SwDocumentState> previous,
-        IReadOnlyList<SwDocumentState> current)
+        IReadOnlyList<SwDocumentDetail> previous,
+        IReadOnlyList<SwDocumentDetail> current)
     {
         var previousMap = previous.ToDictionary(static doc => doc.Id, StringComparer.Ordinal);
-        var currentMap = current.ToDictionary(static doc => doc.Id, StringComparer.Ordinal);
+        var currentMap  = current.ToDictionary(static doc => doc.Id, StringComparer.Ordinal);
 
         var added = current
             .Where(doc => !previousMap.ContainsKey(doc.Id))
             .ToArray();
 
         var updated = current
-            .Where(doc => previousMap.TryGetValue(doc.Id, out var earlier) && earlier != doc)
+            .Where(doc => previousMap.TryGetValue(doc.Id, out var earlier) &&
+                          !string.Equals(earlier.ModelSnapshot, doc.ModelSnapshot, StringComparison.Ordinal))
             .ToArray();
 
         var removed = previous
@@ -432,7 +385,7 @@ public sealed record SwDocumentCollectionPatch
 
         return new SwDocumentCollectionPatch
         {
-            Added = added.Length == 0 ? null : added,
+            Added   = added.Length   == 0 ? null : added,
             Updated = updated.Length == 0 ? null : updated,
             Removed = removed.Length == 0 ? null : removed
         };
