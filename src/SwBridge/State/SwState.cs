@@ -75,65 +75,33 @@ public sealed record SwState
             JsonOptions);
 
     /// <summary>
-    /// Patch response: mode/prevSnap/snapshot at root; all changes nested under "state".
-    /// Session-level changes (activeDoc, selection, activeConfig) appear as items in state.updated.
-    /// Only fields that actually changed are present.
+    /// Patch response: generic JSON diff of the "state" object between two full snapshots.
+    /// Top-level keys of "state" are classified as added, updated, or removed.
+    /// The new value is included for added/updated; the old value is included for removed.
     /// </summary>
     public SwStatePatch BuildPatch(SwState? previous)
     {
-        var previousSnapshotToken = previous?.SnapshotToken;
         previous ??= Create(null, null, null, null, null);
 
-        var added   = new List<SwChangeItem>();
-        var updated = new List<SwChangeItem>();
-        var removed = new List<SwChangeItem>();
+        var prevNode = JsonSerializer.SerializeToNode(ToSessionContext(previous), JsonOptions)?.AsObject();
+        var currNode = JsonSerializer.SerializeToNode(ToSessionContext(this),     JsonOptions)?.AsObject();
 
-        // Session-level changes → updated items
-        if (previous.ActiveDocument != ActiveDocument)
-            updated.Add(new SwChangeItem { ActiveDocument = ActiveDocument });
-        if (!string.Equals(previous.ActiveConfigurationName, ActiveConfigurationName, StringComparison.Ordinal))
-            updated.Add(new SwChangeItem { ActiveConfigurationName = ActiveConfigurationName });
-        if (!previous.Selection.SequenceEqual(Selection))
-            updated.Add(new SwChangeItem { Selection = Selection });
+        var added   = new JsonObject();
+        var updated = new JsonObject();
+        var removed = new JsonObject();
 
-        var prevMap = previous.OpenDocuments.ToDictionary(d => d.Id, StringComparer.Ordinal);
-        var currMap = OpenDocuments.ToDictionary(d => d.Id, StringComparer.Ordinal);
-
-        // Newly opened documents — full detail
-        foreach (var doc in OpenDocuments.Where(d => !prevMap.ContainsKey(d.Id)))
-            added.Add(new SwChangeItem { Document = doc });
-
-        // Closed documents — id only
-        foreach (var id in previous.OpenDocuments.Select(d => d.Id).Where(id => !currMap.ContainsKey(id)))
-            removed.Add(new SwChangeItem { DocumentId = id });
-
-        // Changed documents — fine-grained sub-item diff
-        foreach (var doc in OpenDocuments)
+        foreach (var (key, currVal) in currNode ?? [])
         {
-            if (!prevMap.TryGetValue(doc.Id, out var prev)) continue;
-            if (string.Equals(prev.ModelSnapshot, doc.ModelSnapshot, StringComparison.Ordinal)) continue;
+            if (prevNode is null || !prevNode.ContainsKey(key))
+                added[key] = currVal?.DeepClone();
+            else if (!JsonNodeEquals(prevNode[key], currVal))
+                updated[key] = currVal?.DeepClone();
+        }
 
-            // Geometry scalars
-            var geo = BuildGeometryUpdate(doc.Id, prev, doc);
-            if (geo is not null) updated.Add(geo);
-
-            // Mates
-            DiffItems(prev.Mates, doc.Mates, m => m.Name,
-                m    => new SwChangeItem { DocId = doc.Id, Mate      = m    },
-                name => new SwChangeItem { DocId = doc.Id, MateName  = name },
-                added, updated, removed);
-
-            // Features
-            DiffItems(prev.Features, doc.Features, f => f.Name,
-                f    => new SwChangeItem { DocId = doc.Id, Feature      = f    },
-                name => new SwChangeItem { DocId = doc.Id, FeatureName  = name },
-                added, updated, removed);
-
-            // Components
-            DiffItems(prev.Components, doc.Components, c => c.Name,
-                c    => new SwChangeItem { DocId = doc.Id, Component      = c    },
-                name => new SwChangeItem { DocId = doc.Id, ComponentName  = name },
-                added, updated, removed);
+        foreach (var (key, prevVal) in prevNode ?? [])
+        {
+            if (currNode is null || !currNode.ContainsKey(key))
+                removed[key] = prevVal?.DeepClone();
         }
 
         SwPatchState? state = null;
@@ -149,7 +117,7 @@ public sealed record SwState
 
         return new SwStatePatch
         {
-            PreviousSnapshotToken = previousSnapshotToken,
+            PreviousSnapshotToken = previous.SnapshotToken,
             SnapshotToken         = SnapshotToken,
             State                 = state
         };
@@ -193,55 +161,15 @@ public sealed record SwState
 
     // ── Diff helpers ──────────────────────────────────────────────────────────
 
-    private static SwChangeItem? BuildGeometryUpdate(
-        string docId, SwDocumentDetail prev, SwDocumentDetail curr)
+    private static SwSessionContext ToSessionContext(SwState s) => new()
     {
-        double[]? bounds  = JsonEquals(prev.BoundsMm, curr.BoundsMm) ? null : curr.BoundsMm;
-        double?   mass    = prev.MassGrams == curr.MassGrams          ? null : curr.MassGrams;
-        double?   vol     = prev.VolumeMm3 == curr.VolumeMm3          ? null : curr.VolumeMm3;
-        bool?     unsaved = prev.Unsaved   == curr.Unsaved             ? null : (bool?)curr.Unsaved;
+        ActiveDocument          = s.ActiveDocument,
+        Selection               = s.Selection,
+        ActiveConfigurationName = s.ActiveConfigurationName,
+        Documents               = s.OpenDocuments
+    };
 
-        return bounds is null && mass is null && vol is null && unsaved is null ? null
-            : new SwChangeItem
-            {
-                DocId       = docId,
-                DocSnapshot = curr.ModelSnapshot,
-                BoundsMm    = bounds,
-                MassGrams   = mass,
-                VolumeMm3   = vol,
-                Unsaved     = unsaved
-            };
-    }
-
-    private static void DiffItems<T>(
-        IReadOnlyList<T>? previous,
-        IReadOnlyList<T>? current,
-        Func<T, string> keyOf,
-        Func<T, SwChangeItem> wrapPayload,
-        Func<string, SwChangeItem> wrapRemoval,
-        List<SwChangeItem> added,
-        List<SwChangeItem> updated,
-        List<SwChangeItem> removed)
-    {
-        var prev = previous ?? (IReadOnlyList<T>)[];
-        var curr = current  ?? (IReadOnlyList<T>)[];
-        var prevMap = prev.ToDictionary(keyOf, StringComparer.Ordinal);
-        var currMap = curr.ToDictionary(keyOf, StringComparer.Ordinal);
-
-        foreach (var item in curr)
-        {
-            var key = keyOf(item);
-            if (!prevMap.ContainsKey(key))
-                added.Add(wrapPayload(item));
-            else if (!JsonEquals(item, prevMap[key]))
-                updated.Add(wrapPayload(item));
-        }
-
-        foreach (var key in prev.Select(keyOf).Where(k => !currMap.ContainsKey(k)))
-            removed.Add(wrapRemoval(key));
-    }
-
-    private static bool JsonEquals<T>(T? a, T? b) =>
+    private static bool JsonNodeEquals(JsonNode? a, JsonNode? b) =>
         JsonSerializer.Serialize(a, JsonOptions) ==
         JsonSerializer.Serialize(b, JsonOptions);
 
@@ -314,58 +242,17 @@ public sealed record SwStatePatch
 
 /// <summary>
 /// The changes payload nested under "state" in a patch response.
+/// Each bucket is a JSON object whose keys are top-level "state" keys and whose values are
+/// the new value (added/updated) or the old value (removed).
 /// </summary>
 public sealed record SwPatchState
 {
-    /// <summary>Newly added items: documents, mates, features, or components.</summary>
-    [JsonPropertyName("added")]   public IReadOnlyList<SwChangeItem>? Added   { get; init; }
-    /// <summary>Items whose content changed, including session-level fields (activeDoc, selection, activeConfig).</summary>
-    [JsonPropertyName("updated")] public IReadOnlyList<SwChangeItem>? Updated { get; init; }
-    /// <summary>Removed items (identity only).</summary>
-    [JsonPropertyName("removed")] public IReadOnlyList<SwChangeItem>? Removed { get; init; }
-}
-
-/// <summary>
-/// A single change entry in a patch's added/updated/removed list.
-/// Exactly one payload field is populated per entry; all others are null and omitted from JSON.
-///
-/// Session updated:   one of <see cref="ActiveDocument"/>, <see cref="ActiveConfigurationName"/>, <see cref="Selection"/>.
-/// Document added:    <see cref="Document"/> is set.
-/// Document removed:  <see cref="DocumentId"/> is set.
-/// Sub-doc added/updated: <see cref="DocId"/> + one of <see cref="Mate"/>, <see cref="Feature"/>, <see cref="Component"/>.
-/// Sub-doc removed:   <see cref="DocId"/> + one of <see cref="MateName"/>, <see cref="FeatureName"/>, <see cref="ComponentName"/>.
-/// Geometry changed:  <see cref="DocId"/> + <see cref="DocSnapshot"/> + any changed scalar(s).
-/// </summary>
-public sealed record SwChangeItem
-{
-    // Session-level (appear in state.updated)
-    [JsonPropertyName("activeDoc")]    public SwDocumentState?                 ActiveDocument          { get; init; }
-    [JsonPropertyName("activeConfig")] public string?                          ActiveConfigurationName { get; init; }
-    [JsonPropertyName("selection")]    public IReadOnlyList<SwSelectionState>?  Selection              { get; init; }
-
-    // Document-level
-    [JsonPropertyName("document")]   public SwDocumentDetail? Document   { get; init; }
-    [JsonPropertyName("documentId")] public string?           DocumentId { get; init; }
-
-    // Sub-document scope
-    [JsonPropertyName("docId")]      public string?  DocId       { get; init; }
-    [JsonPropertyName("docSnapshot")]public string?  DocSnapshot { get; init; }
-
-    // Sub-document content (added / updated)
-    [JsonPropertyName("mate")]      public MateInfo?      Mate      { get; init; }
-    [JsonPropertyName("feature")]   public FeatureInfo?   Feature   { get; init; }
-    [JsonPropertyName("component")] public ComponentInfo? Component { get; init; }
-
-    // Sub-document identity (removed)
-    [JsonPropertyName("mateName")]      public string? MateName      { get; init; }
-    [JsonPropertyName("featureName")]   public string? FeatureName   { get; init; }
-    [JsonPropertyName("componentName")] public string? ComponentName { get; init; }
-
-    // Geometry scalars (included in "updated" when only geometry changed)
-    [JsonPropertyName("boundsMm")]  public double[]? BoundsMm  { get; init; }
-    [JsonPropertyName("massG")]     public double?   MassGrams { get; init; }
-    [JsonPropertyName("volumeMm3")] public double?   VolumeMm3 { get; init; }
-    [JsonPropertyName("unsaved")]   public bool?     Unsaved   { get; init; }
+    /// <summary>Keys that did not exist in the previous state.</summary>
+    [JsonPropertyName("added")]   public JsonObject? Added   { get; init; }
+    /// <summary>Keys that existed in both states but whose value changed (new value included).</summary>
+    [JsonPropertyName("updated")] public JsonObject? Updated { get; init; }
+    /// <summary>Keys that existed in the previous state but are absent now (old value included).</summary>
+    [JsonPropertyName("removed")] public JsonObject? Removed { get; init; }
 }
 
 // ── Data records ──────────────────────────────────────────────────────────────
