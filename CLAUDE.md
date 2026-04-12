@@ -2,6 +2,22 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Workflow Documentation Rule
+
+**IMPORTANT:** `workflowops.md` must stay in sync with the actual graph implementation. Any time you make a change to any of the following, update `workflowops.md` to reflect it:
+- Graph nodes (`lib/graph/nodes.ts`)
+- Graph edges / routing logic (`lib/graph/edges.ts`)
+- Graph assembly (`lib/graph/index.ts`)
+- State schema (`lib/graph/state.ts`)
+- System prompt or user prompt (`lib/vba/prompts.ts`)
+- Verification logic (`lib/vba/verify.ts`)
+- API route inputs, outputs, or status codes (`app/api/vba/generate/route.ts`)
+- Pinecone query logic or score thresholds (`lib/pinecone/client.ts`)
+
+Update the relevant section(s) in `workflowops.md` in the same commit as the code change.
+
+---
+
 ## Project Overview
 
 **node-star2.0** is a SolidWorks VBA Macro Generation API for Node-Star Company. It is a Next.js 14 API service that accepts a part ID and action, runs a LangGraph stateful workflow, and returns raw SolidWorks VBA code as plain text.
