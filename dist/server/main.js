@@ -4,95 +4,83 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.server = void 0;
-require("../config"); // must be first — sets env vars
+require("../config");
 const fastify_1 = __importDefault(require("fastify"));
-const uuid_1 = require("uuid");
-const messages_1 = require("@langchain/core/messages");
-const graph_1 = require("../agent/graph");
+const openai_1 = __importDefault(require("openai"));
+const wrappers_1 = require("langsmith/wrappers");
 const config_1 = require("../config");
 const server = (0, fastify_1.default)({ logger: true });
 exports.server = server;
-// CORS hooks
-server.addHook("onSend", async (_request, reply) => {
+const openai = (0, wrappers_1.wrapOpenAI)(new openai_1.default({ apiKey: config_1.config.OPENAI_API_KEY }));
+server.addHook("onSend", async (_req, reply) => {
     reply.header("Access-Control-Allow-Origin", "*");
     reply.header("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
     reply.header("Access-Control-Allow-Headers", "Content-Type,Authorization");
 });
-server.addHook("preHandler", async (request, reply) => {
-    if (request.method === "OPTIONS") {
+server.addHook("preHandler", async (req, reply) => {
+    if (req.method === "OPTIONS")
         reply.code(204).send();
-    }
 });
-// GET /
-server.get("/", async (_request, _reply) => {
-    return {
-        service: "solidworks-vba-gen",
-        version: "1.0.0",
-        docs: "/documentation",
-    };
-});
-// GET /health
-server.get("/health", async (_request, _reply) => {
-    return { status: "ok", service: "solidworks-vba-gen" };
-});
-// POST /v1/chat/completions
+server.get("/", async () => ({ service: "solidworks-vba-gen", version: "1.0.0" }));
+server.get("/health", async () => ({ status: "ok" }));
 server.post("/v1/chat/completions", async (request, reply) => {
     try {
-        const body = request.body;
-        const messages = body.messages ?? [];
-        const lastUserMessage = [...messages]
-            .reverse()
-            .find((m) => m.role === "user");
-        const userContent = lastUserMessage?.content ?? "";
-        const initialState = {
-            messages: [new messages_1.HumanMessage(userContent)],
-            steps: [],
-            api_docs: [],
-            vba_code: "",
-            validation: { is_valid: false, errors: [], corrected_code: "" },
-            retry_count: 0,
-        };
-        const result = await graph_1.app.invoke(initialState);
-        const rawVba = result.validation?.corrected_code?.trim()
-            ? result.validation.corrected_code
-            : result.vba_code ?? "";
-        let finalContent = `\`\`\`vba\n${rawVba}\n\`\`\``;
-        const isValid = result.validation?.is_valid ?? false;
-        const errors = result.validation?.errors ?? [];
-        if (!isValid && errors.length > 0) {
-            const errorComments = errors
-                .map((e) => `' ERROR: ${e}`)
-                .join("\n");
-            finalContent = `${errorComments}\n\n${finalContent}`;
-        }
-        const responseId = "chatcmpl-" + (0, uuid_1.v4)().replace(/-/g, "").slice(0, 8);
-        const response = {
-            id: responseId,
-            object: "chat.completion",
-            created: Math.floor(Date.now() / 1000),
-            model: "solidworks-vba-gen",
-            choices: [
+        const messages = request.body.messages ?? [];
+        const lastUser = [...messages].reverse().find((m) => m.role === "user");
+        const userContent = lastUser?.content ?? "";
+        // Generate VBA code from user request
+        const response = await openai.chat.completions.create({
+            model: "gpt-5.4-mini",
+            max_completion_tokens: 4096,
+            messages: [
                 {
-                    index: 0,
-                    message: { role: "assistant", content: finalContent },
-                    finish_reason: "stop",
+                    role: "system",
+                    content: "Output only raw VBA code. No markdown, no text before or after the code. VBA comments inside the code are fine.",
+                },
+                { role: "user", content: userContent },
+            ],
+        });
+        const vba = (response.choices[0]?.message?.content ?? "")
+            .replace(/^```vba\n?/im, "")
+            .replace(/^```\n?/m, "")
+            .replace(/```$/m, "")
+            .trim();
+        console.log(`[generate] ${vba.split("\n").length} lines`);
+        // Generate metadata: name, description, and chat response
+        const metaResponse = await openai.chat.completions.create({
+            model: "gpt-5.4-mini",
+            max_completion_tokens: 512,
+            response_format: { type: "json_object" },
+            messages: [
+                {
+                    role: "system",
+                    content: `Given a SolidWorks VBA macro and the user request that produced it, return JSON with exactly these fields:
+{
+  "name": "Human-readable macro name (e.g. 'Create Cube with Fillets')",
+  "description": "One sentence: what the macro does and any preconditions (e.g. requires an open part document).",
+  "response": "2-3 sentence chat reply to the user explaining what was generated and how to use it."
+}`,
+                },
+                {
+                    role: "user",
+                    content: `User request: ${userContent}\n\nGenerated VBA:\n${vba}`,
                 },
             ],
-            usage: {
-                prompt_tokens: 0,
-                completion_tokens: 0,
-                total_tokens: 0,
-            },
+        });
+        let meta = { name: "SolidWorks Macro", description: "", response: "" };
+        try {
+            meta = JSON.parse(metaResponse.choices[0]?.message?.content ?? "{}");
+        }
+        catch { /* keep defaults */ }
+        return {
+            name: meta.name,
+            description: meta.description,
+            vba,
+            response: meta.response,
         };
-        return response;
     }
     catch (err) {
-        reply.code(500).send({
-            error: {
-                message: String(err),
-                type: "server_error",
-            },
-        });
+        reply.code(500).send({ error: { message: String(err), type: "server_error" } });
     }
 });
 const start = async () => {

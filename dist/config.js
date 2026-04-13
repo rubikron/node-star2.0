@@ -43,16 +43,15 @@ function requireEnv(key) {
     return val;
 }
 exports.config = {
-    ANTHROPIC_API_KEY: requireEnv("ANTHROPIC_API_KEY"),
+    OPENAI_API_KEY: requireEnv("OPENAI_API_KEY"),
     PINECONE_API_KEY: requireEnv("PINECONE_API_KEY"),
-    PINECONE_INDEX: process.env.PINECONE_INDEX ?? "solidworks-api",
+    PINECONE_INDEX: process.env.PINECONE_INDEX ?? "solidworks-api-code",
     LANGSMITH_API_KEY: requireEnv("LANGSMITH_API_KEY"),
     LANGSMITH_PROJECT: process.env.LANGSMITH_PROJECT ?? "solidworks-vba-gen",
-    LANGSMITH_TRACING_V2: process.env.LANGSMITH_TRACING_V2 ?? "true",
     PORT: parseInt(process.env.PORT ?? "8000", 10),
 };
-// Set LangSmith env vars for automatic tracing
-process.env.LANGCHAIN_TRACING_V2 = exports.config.LANGSMITH_TRACING_V2;
+// LangSmith picks these up automatically
+process.env.LANGCHAIN_TRACING_V2 = "true";
 process.env.LANGCHAIN_API_KEY = exports.config.LANGSMITH_API_KEY;
 process.env.LANGCHAIN_PROJECT = exports.config.LANGSMITH_PROJECT;
 //# sourceMappingURL=config.js.map
