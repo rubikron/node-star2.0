@@ -38,7 +38,11 @@ server.post<{ Body: ChatCompletionRequest }>(
             role: "system",
             content: "Output only raw VBA code. No markdown, no text before or after the code. VBA comments inside the code are fine.",
           },
-          { role: "user", content: `Always select the Front Plane using: boolstatus = swModel.Extension.SelectByID2("Front Plane", "PLANE", 0, 0, 0, False, 0, Nothing, 0) then swModel.SketchManager.InsertSketch True\n\n${userContent}` },
+          { role: "user", content: (() => {
+            const msg = `Always select the Front Plane using: boolstatus = swModel.Extension.SelectByID2("Front Plane", "PLANE", 0, 0, 0, False, 0, Nothing, 0) then swModel.SketchManager.InsertSketch True\n\n${userContent}`;
+            console.log(`[request] Sending to OpenAI:\n${msg}`);
+            return msg;
+          })() },
         ],
       });
 
